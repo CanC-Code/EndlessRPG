@@ -1,13 +1,15 @@
 #!/bin/bash
-echo "Scaffolding Stable Android Project Structure..."
+echo "Dynamically Scaffolding Android Project Structure..."
+
+# Create all necessary directories
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
-mkdir -p runtime/
+mkdir -p runtime
 
-# Root Gradle Configs
+# 1. Root Gradle Configuration
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
 dependencyResolutionManagement { 
@@ -22,6 +24,7 @@ cat << 'EOF' > build.gradle
 plugins { id 'com.android.application' version '8.2.0' apply false }
 EOF
 
+# 2. App Module Configuration
 cat << 'EOF' > app/build.gradle
 plugins { id 'com.android.application' }
 android {
@@ -37,7 +40,7 @@ android {
 }
 EOF
 
-# Manifest
+# 3. Android Manifest
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -48,37 +51,31 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# UI Resources
+# 4. UI Resources
 cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
     <solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/>
 </shape>
 EOF
+
 cat << 'EOF' > app/src/main/res/drawable/action_btn.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
     <solid android:color="#AA000000"/><stroke android:width="2dp" android:color="#AAAAAA"/>
 </shape>
 EOF
+
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent">
-    <android.opengl.GLSurfaceView android:id="@+id/game_surface"
-        android:layout_width="match_parent" android:layout_height="match_parent" />
-    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp"
-        android:layout_alignParentBottom="true" android:layout_margin="30dp"
-        android:background="@drawable/thumbstick_base" />
-    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_alignParentBottom="true" android:layout_alignParentRight="true"
-        android:layout_margin="30dp" android:orientation="horizontal">
-        <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp"
-            android:layout_marginRight="15dp" android:text="B" android:background="@drawable/action_btn" />
-        <Button android:id="@+id/btn_sword" android:layout_width="90dp" android:layout_height="90dp"
-            android:text="A" android:background="@drawable/action_btn" />
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
+    <android.opengl.GLSurfaceView android:id="@+id/game_surface" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp" android:layout_alignParentBottom="true" android:layout_margin="30dp" android:background="@drawable/thumbstick_base" />
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp" android:orientation="horizontal">
+        <Button android:id="@+id/btn_shield" android:layout_width=\"80dp\" android:layout_height=\"80dp\" android:layout_marginRight=\"15dp\" android:text=\"B\" android:background=\"@drawable/action_btn\" />
+        <Button android:id="@+id/btn_sword" android:layout_width=\"90dp\" android:layout_height=\"90dp\" android:text=\"A\" android:background=\"@drawable/action_btn\" />
     </LinearLayout>
 </RelativeLayout>
 EOF
 
-# FIXED JAVA LAYER (Depth Buffer Allocation)
+# 5. Java Activity Logic
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
@@ -103,9 +100,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         setContentView(R.layout.activity_main);
         glView = findViewById(R.id.game_surface);
         
-        // CRITICAL FIX: Allocate 16-bit depth buffer to prevent hardware crash
         glView.setEGLContextClientVersion(3);
-        glView.setEGLConfigChooser(8, 8, 8, 8, 16, 0); 
+        glView.setEGLConfigChooser(8, 8, 8, 8, 16, 0); // Hardware depth buffer
         glView.setRenderer(this);
 
         findViewById(R.id.thumbstick).setOnTouchListener((v, e) -> {
@@ -115,7 +111,6 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
             } else { tX = 0f; tY = 0f; }
             return true;
         });
-
         findViewById(R.id.btn_sword).setOnClickListener(v -> triggerAction(1));
         findViewById(R.id.btn_shield).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_DOWN) triggerAction(2);
