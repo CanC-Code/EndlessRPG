@@ -1,15 +1,13 @@
 #!/bin/bash
-echo "Generating 3D Assets and Optimized Engine..."
+echo "Generating 3D Assets and Hardware-Safe Engine..."
 
-# 1. Blender Modeler (Fixed for 4.0.2 Headless)
+# 1. Blender Modeler
 cat << 'EOF' > runtime/build_models.py
 import bpy
 from math import radians
-
 def clean():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
-
 def export_part(name, build_func):
     clean()
     build_func()
@@ -22,23 +20,17 @@ def export_part(name, build_func):
     for tri in mesh.loop_triangles:
         for loop_idx in tri.loops:
             vert = mesh.vertices[mesh.loops[loop_idx].vertex_index]
-            # Fixed coordinate mapping for OpenGL
             v.extend([vert.co.x, vert.co.z, -vert.co.y])
             lum = 0.5 + (vert.normal.z * 0.4)
             c.extend([lum, lum, lum, 1.0])
     return v, c
 
-# Refactored build functions to use proper assignment instead of invalid .set() calls
 def build_hero():
-    # Body
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0,0,1))
     bpy.context.object.scale = (0.3, 0.2, 0.5)
-    # Head
     bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.25, location=(0,0,1.8))
-    # Cape
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0,-0.2,1.2))
     bpy.context.object.scale = (0.3, 0.05, 0.6)
-    
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.join()
 
@@ -46,7 +38,6 @@ def build_arm():
     bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0.5, 0, 1.2))
     bpy.ops.mesh.primitive_cylinder_add(radius=0.03, depth=1.2, location=(0.5, 0.2, 1.2))
     bpy.context.object.rotation_euler = (radians(90), 0, 0)
-    
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.join()
 
@@ -62,7 +53,6 @@ with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
     f.write(f"const float C_ARM[] = {{ {', '.join(map(str, c_arm))} }};\n")
     f.write(f"const int N_ARM = {len(v_arm)//3};\n")
 EOF
-
 blender --background --python runtime/build_models.py
 
 # 2. CMakeLists.txt
@@ -75,24 +65,20 @@ find_library(gles3-lib GLESv3)
 target_link_libraries(procedural_engine ${log-lib} ${gles3-lib})
 EOF
 
-# 3. Native Engine Source
+# 3. C++ Engine (Math fault safety)
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <math.h>
-#include <vector>
-#include <android/log.h>
 #include "GeneratedModels.h"
-
-#define LOG_TAG "ProceduralEngine"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec4 ca; uniform mat4 m; uniform vec4 bc; out vec4 vCol; void main(){ gl_Position=m*vec4(p,1.0); vCol=bc*ca; }";
 const char* fS = "#version 300 es\nprecision mediump float; in vec4 vCol; out vec4 o; void main(){ o=vCol; }";
 
 GLuint prog, heroVAO, armVAO, groundVAO;
-float px=0, pz=0, anim=0, walk=0;
-bool slash=false, block=false;
+float px=0, pz=0, anim=0, walk=0, lastFace=0;
+// Volatile to prevent tearing crashes across UI and GL threads
+volatile bool slash=false, block=false;
 
 float noise(float x, float z) { return (sin(x * 0.2f) * cos(z * 0.2f)) * 0.5f; }
 
@@ -103,12 +89,12 @@ GLuint setupVAO(const float* v, const float* c, int n) {
     glBindVertexArray(vao);
     
     glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
-    glBufferData(GL_ARRAY_BUFFER, n * 3 * 4, v, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, n * 12, v, GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
     glEnableVertexAttribArray(0);
     
     glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
-    glBufferData(GL_ARRAY_BUFFER, n * 4 * 4, c, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, n * 16, c, GL_STATIC_DRAW);
     glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, 0);
     glEnableVertexAttribArray(1);
     
@@ -121,7 +107,8 @@ extern "C" {
         GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
         GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
         prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog);
-        glUseProgram(prog); glEnable(GL_DEPTH_TEST);
+        glUseProgram(prog); 
+        glEnable(GL_DEPTH_TEST);
         
         heroVAO = setupVAO(M_HERO, C_HERO, N_HERO);
         armVAO = setupVAO(M_ARM, C_ARM, N_ARM);
@@ -129,13 +116,13 @@ extern "C" {
         float g[] = { -100,0,-100, 100,0,-100, -100,0,100, 100,0,-100, 100,0,100, -100,0,100 };
         float gc[] = { 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1 };
         groundVAO = setupVAO(g, gc, 6);
-        LOGI("Engine Created Successfully");
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) { glViewport(0,0,w,h); }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy) {
-        if(!block) { px += ix*0.15f; pz -= iy*0.15f; walk += 0.2f; }
+        bool moving = (fabs(ix) > 0.05f || fabs(iy) > 0.05f);
+        if(!block && moving) { px += ix*0.15f; pz -= iy*0.15f; walk += 0.2f; }
         if(slash) { anim += 0.3f; if(anim > 3.14f){ slash=false; anim=0; } }
 
         glClearColor(0.5f, 0.8f, 1.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -145,8 +132,10 @@ extern "C" {
         glUniformMatrix4fv(mL, 1, GL_FALSE, matG); glUniform4f(cL, 0.2f, 0.5f, 0.2f, 1.0f);
         glBindVertexArray(groundVAO); glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        float face = atan2(-ix, -iy);
-        float s = sin(face), c = cos(face);
+        // Safely calculate rotation only when moving to avoid divide-by-zero crashes
+        if(moving) lastFace = atan2(-ix, -iy);
+        float s = sin(lastFace), c = cos(lastFace);
+        
         float matH[16] = { c,0,s,0, 0,1,0,0, -s,0,c,0, 0, sin(walk)*0.1f, -12.0f, 5.0f };
         glUniformMatrix4fv(mL, 1, GL_FALSE, matH); glUniform4f(cL, 0.1f, 0.3f, 0.8f, 1.0f);
         glBindVertexArray(heroVAO); glDrawArrays(GL_TRIANGLES, 0, N_HERO);
