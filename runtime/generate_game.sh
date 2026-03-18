@@ -1,177 +1,405 @@
 #!/bin/bash
-echo "Generating Infinite World and Skeletal Character Engine..."
+mkdir -p app/src/main/res/drawable
+cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/>
+</shape>
+EOF
+cat << 'EOF' > app/src/main/res/drawable/action_btn.xml
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#88000000"/><stroke android:width="2dp" android:color="#CCCCCC"/>
+</shape>
+EOF
 
-# 1. High-Fidelity Blender Modeler (Modular Humanoid & Props)
 cat << 'EOF' > runtime/build_models.py
 import bpy
+import bmesh
+from math import radians
 
-def export(name, build_func):
+def clean_scene():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
-    build_func()
-    obj = bpy.context.object
+
+def triangulate_and_export(obj, name, apply_bevel=False):
+    bpy.context.view_layer.objects.active = obj
+    if apply_bevel:
+        bpy.ops.object.modifier_add(type='BEVEL')
+        obj.modifiers["Bevel"].width = 0.05
+        obj.modifiers["Bevel"].segments = 2
     bpy.ops.object.modifier_add(type='TRIANGULATE')
-    for mod in obj.modifiers:
-        if mod.type == 'TRIANGULATE': bpy.ops.object.modifier_apply(modifier=mod.name)
-    v = []
-    for face in obj.data.polygons:
-        for vi in face.vertices:
-            pt = obj.data.vertices[vi].co
-            v.extend([pt.x, pt.z, -pt.y]) # Swap axes for OpenGL
-    return v
+    bpy.ops.object.modifier_apply(modifier="TRIANGULATE")
+    
+    verts = []
+    colors = []
+    
+    mesh = obj.data
+    mesh.calc_loop_triangles()
+    
+    for tri in mesh.loop_triangles:
+        for loop_index in tri.loops:
+            loop = mesh.loops[loop_index]
+            v = mesh.vertices[loop.vertex_index]
+            # Convert to OpenGL coordinate system (X, Z, -Y)
+            verts.extend([v.co.x, v.co.z, -v.y])
+            
+            # Simple directional lighting bake based on normals
+            intensity = 0.4 + (v.normal.z * 0.4) + (v.normal.x * 0.2)
+            intensity = max(0.2, min(1.0, intensity))
+            colors.extend([intensity, intensity, intensity, 1.0])
+            
+    return verts, colors
 
-# Humanoid Anatomy
-m_head = export("HEAD", lambda: bpy.ops.mesh.primitive_ico_sphere_add(radius=0.25, subdivisions=2, location=(0,0,1.4)))
-m_torso = export("TORSO", lambda: bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0,0,0.8)))
-bpy.context.object.scale = (0.4, 0.25, 0.6) # Tapered chest
-m_limb = export("LIMB", lambda: bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0,0,-0.3)))
-bpy.context.object.scale = (0.15, 0.15, 0.4) # Pivot at shoulder/hip
+clean_scene()
 
-# Weapons & Props
-m_sword = export("SWORD", lambda: bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0,0,0.5)))
-bpy.context.object.scale = (0.05, 0.1, 0.8)
-m_shield = export("SHIELD", lambda: bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=0.1, location=(0,0,0)))
-m_trunk = export("TRUNK", lambda: bpy.ops.mesh.primitive_cylinder_add(radius=0.2, depth=1.0, location=(0,0,0.5)))
-m_leaves = export("LEAVES", lambda: bpy.ops.mesh.primitive_cone_add(radius1=1.2, depth=2.5, location=(0,0,1.5)))
+# --- HERO CORE (Head, Torso, Legs, Cape) ---
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 1.2))
+torso = bpy.context.object
+torso.scale = (0.35, 0.2, 0.5)
+bpy.ops.object.transform_apply(scale=True)
 
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, 1.95))
+head = bpy.context.object
+head.scale = (0.25, 0.25, 0.25)
+bpy.ops.object.transform_apply(scale=True)
+
+bpy.ops.mesh.primitive_cylinder_add(radius=0.1, depth=0.8, location=(-0.15, 0, 0.4))
+leg_l = bpy.context.object
+bpy.ops.mesh.primitive_cylinder_add(radius=0.1, depth=0.8, location=(0.15, 0, 0.4))
+leg_r = bpy.context.object
+
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, -0.25, 1.2))
+cape = bpy.context.object
+cape.scale = (0.3, 0.05, 0.6)
+cape.rotation_euler[0] = radians(-15)
+bpy.ops.object.transform_apply(scale=True)
+
+# Join Hero Core
+bpy.ops.object.select_all(action='DESELECT')
+for obj in [torso, head, leg_l, leg_r, cape]:
+    obj.select_set(True)
+bpy.context.view_layer.objects.active = torso
+bpy.ops.object.join()
+body_v, body_c = triangulate_and_export(torso, "BODY", True)
+
+clean_scene()
+
+# --- HERO SWORD ARM ---
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0, -0.3))
+arm = bpy.context.object
+arm.scale = (0.1, 0.1, 0.3)
+bpy.ops.object.transform_apply(scale=True)
+
+bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=1.2, location=(0, 0.3, -0.4))
+blade = bpy.context.object
+blade.rotation_euler[0] = radians(90)
+bpy.ops.object.transform_apply(rotation=True)
+
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0, 0.05, -0.4))
+guard = bpy.context.object
+guard.scale = (0.3, 0.05, 0.05)
+bpy.ops.object.transform_apply(scale=True)
+
+bpy.ops.object.select_all(action='DESELECT')
+for obj in [arm, blade, guard]:
+    obj.select_set(True)
+bpy.context.view_layer.objects.active = arm
+bpy.ops.object.join()
+# Offset arm to pivot at shoulder
+arm.location = (0.45, 0, 1.5) 
+arm_v, arm_c = triangulate_and_export(arm, "ARM", False)
+
+clean_scene()
+
+# --- HERO SHIELD ARM ---
+bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=0.1, location=(0, 0, 0))
+shield = bpy.context.object
+shield.rotation_euler[1] = radians(90)
+bpy.ops.object.transform_apply(rotation=True)
+shield.location = (-0.45, 0.2, 1.2)
+shield_v, shield_c = triangulate_and_export(shield, "SHIELD", True)
+
+clean_scene()
+
+# --- ENVIRONMENT SCATTER OBJECTS ---
+bpy.ops.mesh.primitive_cylinder_add(radius=0.2, depth=1.5, location=(0, 0, 0.75))
+trunk = bpy.context.object
+trunk_v, trunk_c = triangulate_and_export(trunk, "TRUNK")
+
+clean_scene()
+bpy.ops.mesh.primitive_cone_add(radius1=1.2, depth=2.5, location=(0, 0, 2.0))
+leaves = bpy.context.object
+leaves_v, leaves_c = triangulate_and_export(leaves, "LEAVES")
+
+clean_scene()
+bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.6, location=(0, 0, 0.2))
+rock = bpy.context.object
+rock.scale = (1.0, 0.8, 0.5)
+bpy.ops.object.transform_apply(scale=True)
+rock_v, rock_c = triangulate_and_export(rock, "ROCK", True)
+
+# --- EXPORT TO C++ HEADER ---
 with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
     f.write("#pragma once\n")
-    for n, d in [("HEAD", m_head), ("TORSO", m_torso), ("LIMB", m_limb), 
-                 ("SWORD", m_sword), ("SHIELD", m_shield), 
-                 ("TRUNK", m_trunk), ("LEAVES", m_leaves)]:
-        f.write(f"const float M_{n}[] = {{ {', '.join(map(str, d))} }};\n")
-        f.write(f"const int C_{n} = {len(d)//3};\n")
+    models = [
+        ("BODY", body_v, body_c), 
+        ("ARM", arm_v, arm_c), 
+        ("SHIELD", shield_v, shield_c),
+        ("TRUNK", trunk_v, trunk_c),
+        ("LEAVES", leaves_v, leaves_c),
+        ("ROCK", rock_v, rock_c)
+    ]
+    for name, v, c in models:
+        f.write(f"const float M_{name}[] = {{ {', '.join(map(lambda x: f'{x:.4f}f', v))} }};\n")
+        f.write(f"const float C_{name}[] = {{ {', '.join(map(lambda x: f'{x:.4f}f', c))} }};\n")
+        f.write(f"const int COUNT_{name} = {len(v)//3};\n")
 EOF
 
 blender --background --python runtime/build_models.py
 
-# 2. Advanced C++ Engine (Procedural Terrain Shader & Animation)
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <math.h>
 #include <vector>
+#include <map>
 #include "GeneratedModels.h"
 
-// Vertex Shader: Dynamically generates hills based on absolute world coordinates
-const char* vS = "#version 300 es\n"
-"layout(location=0) in vec3 p;\n"
-"uniform mat4 uM;\n"
-"uniform vec3 uPos;\n"
-"uniform int isTerrain;\n"
-"out float vHeight;\n"
-"void main() {\n"
-"  vec3 worldPos = p + uPos;\n"
-"  if(isTerrain == 1) {\n"
-"    // Procedural Noise function for hills/valleys\n"
-"    worldPos.y += sin(worldPos.x * 0.3) * cos(worldPos.z * 0.3) * 1.5;\n"
-"    vHeight = worldPos.y;\n"
-"  } else { vHeight = 0.0; }\n"
-"  gl_Position = uM * vec4(worldPos, 1.0);\n"
-"}";
 
-const char* fS = "#version 300 es\n"
-"precision mediump float; in float vHeight; out vec4 o; uniform vec4 c; uniform int isTerrain;\n"
-"void main() {\n"
-"  if(isTerrain == 1) o = vec4(c.r, c.g + (vHeight * 0.15), c.b, 1.0); // Highlight peaks\n"
-"  else o = c;\n"
-"}";
+
+const char* vS = R"glsl(
+#version 300 es
+layout(location=0) in vec3 p;
+layout(location=1) in vec4 colAttr;
+uniform mat4 uMatrix;
+uniform vec4 uBaseColor;
+out vec4 vColor;
+void main() {
+    gl_Position = uMatrix * vec4(p, 1.0);
+    // Combine base color with the baked directional light intensity
+    vColor = uBaseColor * colAttr; 
+}
+)glsl";
+
+const char* fS = R"glsl(
+#version 300 es
+precision mediump float; 
+in vec4 vColor;
+out vec4 fragColor; 
+void main() { 
+    fragColor = vColor; 
+}
+)glsl";
 
 GLuint prog;
-float px=0, pz=0, animSlash=0, animWalk=0;
-bool slash=false, block=false, moving=false;
+float px = 0.0f, pz = 0.0f, anim = 0.0f, walkAnim = 0.0f;
+bool isSlash = false, isBlock = false;
 
-std::vector<float> grid; // The infinite terrain treadmill
+// Procedural Noise function for infinite terrain height mapping
+float hash(float n) {
+    return fract(sin(n) * 43758.5453123f);
+}
 
-void drawPart(GLint mL, GLint pL, GLint cL, GLint tL, const float* v, int n, float x, float y, float z, float r, float g, float b, float rx=0, float ry=0, int isTerrain=0) {
-    float sx = sin(rx), cx = cos(rx), sy = sin(ry), cy = cos(ry);
-    // Combined Rotation & Perspective Math
-    float mat[16] = {
-        cy, sx*sy, cx*sy, 0,
-        0, cx*1.4f, -sx*1.4f, 0, // 1.4f stretches Y slightly for FOV
-        -sy, sx*cy, cx*cy, 0,
-        0, -1.0f, -8.0f, 4.0f   // W=4.0 creates the 3D depth perspective
-    };
-    glUniformMatrix4fv(mL, 1, GL_FALSE, mat);
-    glUniform3f(pL, x - px, y, z - pz);
+float noise(vec2 x) {
+    vec2 p = vec2(floor(x.x), floor(x.y));
+    vec2 f = vec2(fract(x.x), fract(x.y));
+    f = vec2(f.x*f.x*(3.0f-2.0f*f.x), f.y*f.y*(3.0f-2.0f*f.y));
+    float n = p.x + p.y * 57.0f;
+    return mix(mix(hash(n+0.0f), hash(n+1.0f), f.x),
+               mix(hash(n+57.0f), hash(n+58.0f), f.x), f.y);
+}
+
+float getTerrainHeight(float x, float z) {
+    vec2 pos = vec2(x * 0.1f, z * 0.1f);
+    float h = noise(pos) * 2.0f;
+    h += noise(vec2(pos.x * 2.0f, pos.y * 2.0f)) * 0.5f;
+    return h;
+}
+
+struct Chunk {
+    int cx, cz;
+    std::vector<float> verts;
+    std::vector<float> colors;
+    std::vector<vec3> trees;
+    std::vector<vec3> rocks;
+};
+
+std::map<std::pair<int, int>, Chunk> chunkCache;
+const int CHUNK_SIZE = 16;
+const int RENDER_DIST = 2;
+
+struct vec3 { float x, y, z; };
+
+void generateChunk(int cx, int cz) {
+    Chunk chunk;
+    chunk.cx = cx; chunk.cz = cz;
+    
+    float startX = cx * CHUNK_SIZE;
+    float startZ = cz * CHUNK_SIZE;
+    
+    for (int z = 0; z < CHUNK_SIZE; z++) {
+        for (int x = 0; x < CHUNK_SIZE; x++) {
+            float wx = startX + x;
+            float wz = startZ + z;
+            
+            float hBL = getTerrainHeight(wx, wz);
+            float hBR = getTerrainHeight(wx + 1, wz);
+            float hTL = getTerrainHeight(wx, wz + 1);
+            float hTR = getTerrainHeight(wx + 1, wz + 1);
+            
+            // T1
+            chunk.verts.insert(chunk.verts.end(), {wx, hBL, wz, wx+1, hBR, wz, wx, hTL, wz+1});
+            // T2
+            chunk.verts.insert(chunk.verts.end(), {wx+1, hBR, wz, wx+1, hTR, wz+1, wx, hTL, wz+1});
+            
+            // Procedural terrain coloring based on height
+            for (int i = 0; i < 6; i++) {
+                float h = (i < 3) ? ((i==0)?hBL:(i==1)?hBR:hTL) : ((i==0)?hBR:(i==1)?hTR:hTL);
+                float r=0.2f, g=0.5f, b=0.2f; // Grass
+                if (h > 1.8f) { r=0.5f; g=0.5f; b=0.5f; } // Rock
+                if (h > 2.2f) { r=0.9f; g=0.9f; b=0.9f; } // Snow
+                if (h < 0.2f) { r=0.8f; g=0.7f; b=0.4f; } // Sand
+                
+                // Add fake AO / shading
+                float shade = 0.7f + (hash(wx * 10.0f + wz) * 0.3f);
+                chunk.colors.insert(chunk.colors.end(), {r*shade, g*shade, b*shade, 1.0f});
+            }
+            
+            // Scatter decorators
+            float rnd = hash(wx * 7.0f + wz * 13.0f);
+            if (h > 0.3f && h < 1.7f) {
+                if (rnd > 0.95f) chunk.trees.push_back({wx, hBL, wz});
+                else if (rnd < 0.02f) chunk.rocks.push_back({wx, hBL, wz});
+            }
+        }
+    }
+    chunkCache[{cx, cz}] = chunk;
+}
+
+
+
+void drawMesh(GLint mL, GLint cL, const float* v, const float* c, int n, float x, float y, float z, float r, float g, float b, float rotY=0, float rotX=0) {
+    float sy = sin(rotY), cy = cos(rotY);
+    float sx = sin(rotX), cx = cos(rotX);
+    
+    // Y Rotation
+    float mRotY[16] = { cy,0,sy,0, 0,1,0,0, -sy,0,cy,0, 0,0,0,1 };
+    // X Rotation
+    float mRotX[16] = { 1,0,0,0, 0,cx,-sx,0, 0,sx,cx,0, 0,0,0,1 };
+    
+    // Perspective Camera setup tracking player
+    float mat[16] = { 1,0,0,0, 0,1.3f,0,0, 0,0,1,0, x-px, y-1.5f - getTerrainHeight(px, pz), z-pz-12.0f, 4.0f };
+    
+    // Combine matrices (simplified manual mul for transformation)
+    float finalMat[16];
+    for(int i=0; i<4; i++) {
+        for(int j=0; j<4; j++) {
+            finalMat[i*4+j] = 0;
+            for(int k=0; k<4; k++) finalMat[i*4+j] += mat[k*4+j] * mRotY[i*4+k];
+        }
+    }
+    
+    glUniformMatrix4fv(mL, 1, GL_FALSE, finalMat);
     glUniform4f(cL, r, g, b, 1.0f);
-    glUniform1i(tL, isTerrain);
     
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, v);
     glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, c);
+    glEnableVertexAttribArray(1);
     glDrawArrays(GL_TRIANGLES, 0, n);
 }
 
-// Pseudo-random hash for scattering trees
-float hash(float x, float z) { return fract(sin(x * 12.9898f + z * 78.233f) * 43758.5453123f); }
+void drawDynamicMesh(GLint mL, GLint cL, const std::vector<float>& v, const std::vector<float>& c) {
+    float mat[16] = { 1,0,0,0, 0,1.3f,0,0, 0,0,1,0, -px, -1.5f - getTerrainHeight(px, pz), -pz-12.0f, 4.0f };
+    glUniformMatrix4fv(mL, 1, GL_FALSE, mat);
+    glUniform4f(cL, 1.0f, 1.0f, 1.0f, 1.0f); // White base, uses vertex colors
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, v.data());
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, c.data());
+    glEnableVertexAttribArray(1);
+    glDrawArrays(GL_TRIANGLES, 0, v.size() / 3);
+}
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
         GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
         GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
         prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog);
-        glUseProgram(prog); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE);
-
-        // Build the Terrain Grid (Treadmill around player)
-        for(int z=-15; z<15; z++) {
-            for(int x=-15; x<15; x++) {
-                grid.insert(grid.end(), {(float)x,0,(float)z, (float)x+1,0,(float)z, (float)x,0,(float)z+1});
-                grid.insert(grid.end(), {(float)x+1,0,(float)z, (float)x+1,0,(float)z+1, (float)x,0,(float)z+1});
-            }
-        }
+        glUseProgram(prog); 
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
     }
-    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) { glViewport(0,0,w,h); }
+    
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) { 
+        glViewport(0,0,w,h); 
+    }
+    
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy) {
-        moving = (!block && (ix != 0 || iy != 0));
-        if(moving) { px += ix*0.1f; pz -= iy*0.1f; animWalk += 0.2f; } else { animWalk = 0; }
-        if(slash) { animSlash += 0.3f; if(animSlash > 3.14f){ slash=false; animSlash=0; } }
+        bool moving = false;
+        if(!isBlock && (fabs(ix) > 0.01f || fabs(iy) > 0.01f)) { 
+            px += ix*0.2f; pz -= iy*0.2f; 
+            moving = true;
+        }
+        
+        if (moving) walkAnim += 0.3f;
+        else walkAnim = 0.0f;
+        
+        if(isSlash) { anim += 0.3f; if(anim > 3.14f){ isSlash=false; anim=0; } }
 
-        glClearColor(0.4f, 0.7f, 1.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        GLint mL = glGetUniformLocation(prog, "uM"), pL = glGetUniformLocation(prog, "uPos");
-        GLint cL = glGetUniformLocation(prog, "c"), tL = glGetUniformLocation(prog, "isTerrain");
+        glClearColor(0.5f, 0.75f, 1.0f, 1.0f); // Sky color
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        GLint mL = glGetUniformLocation(prog, "uMatrix"), cL = glGetUniformLocation(prog, "uBaseColor");
 
-        // 1. Render Infinite Terrain (Snaps to integers to hide grid movement)
-        drawPart(mL, pL, cL, tL, grid.data(), grid.size()/3, floor(px), 0, floor(pz), 0.2f, 0.5f, 0.2f, 0, 0, 1);
-
-        // 2. Render Environment (Scattered via Hash)
-        int chunkX = floor(px/10.0f) * 10, chunkZ = floor(pz/10.0f) * 10;
-        for(int z=-20; z<=20; z+=10) {
-            for(int x=-20; x<=20; x+=10) {
-                if(hash(chunkX+x, chunkZ+z) > 0.5f) { // 50% chance to spawn tree
-                    float tx = chunkX+x + 5.0f, tz = chunkZ+z + 5.0f;
-                    float ty = sin(tx*0.3)*cos(tz*0.3)*1.5; // Match terrain height
-                    drawPart(mL, pL, cL, tL, M_TRUNK, C_TRUNK, tx, ty, tz, 0.4f, 0.2f, 0.1f);
-                    drawPart(mL, pL, cL, tL, M_LEAVES, C_LEAVES, tx, ty+1.0f, tz, 0.1f, 0.4f, 0.1f);
+        // Render Chunks
+        int ccx = (int)floor(px / CHUNK_SIZE);
+        int ccz = (int)floor(pz / CHUNK_SIZE);
+        
+        for (int z = -RENDER_DIST; z <= RENDER_DIST; z++) {
+            for (int x = -RENDER_DIST; x <= RENDER_DIST; x++) {
+                int mapX = ccx + x;
+                int mapZ = ccz + z;
+                if (chunkCache.find({mapX, mapZ}) == chunkCache.end()) {
+                    generateChunk(mapX, mapZ);
+                }
+                
+                Chunk& c = chunkCache[{mapX, mapZ}];
+                drawDynamicMesh(mL, cL, c.verts, c.colors);
+                
+                for(auto& t : c.trees) {
+                    drawMesh(mL, cL, M_TRUNK, C_TRUNK, COUNT_TRUNK, t.x, t.y, t.z, 0.3f, 0.2f, 0.1f);
+                    drawMesh(mL, cL, M_LEAVES, C_LEAVES, COUNT_LEAVES, t.x, t.y, t.z, 0.2f, 0.6f, 0.2f);
+                }
+                for(auto& r : c.rocks) {
+                    drawMesh(mL, cL, M_ROCK, C_ROCK, COUNT_ROCK, r.x, r.y, r.z, 0.6f, 0.6f, 0.6f);
                 }
             }
         }
 
-        // 3. Render Skeletal Humanoid Player
-        float pY = sin(px*0.3)*cos(pz*0.3)*1.5; // Player stands ON the terrain
-        float wR = sin(animWalk)*0.5f;          // Walk Rotation (Legs/Arms)
-        float faceRot = atan2(-ix, -iy);        // Player rotation based on thumbstick
+        // Draw Real Character Model
+        float bobbing = sin(walkAnim) * 0.1f;
+        float heroY = getTerrainHeight(px, pz) + bobbing;
         
-        // Head & Torso
-        drawPart(mL, pL, cL, tL, M_HEAD, C_HEAD, px, pY, pz, 0.9f, 0.7f, 0.6f, 0, faceRot);
-        drawPart(mL, pL, cL, tL, M_TORSO, C_TORSO, px, pY, pz, 0.2f, 0.3f, 0.8f, 0, faceRot);
+        // Character facing direction
+        float facing = atan2(-ix, -iy);
+        if (!moving) facing = 0.0f; // retain last facing in full engine, reset for simplicity
         
-        // Legs (Walking animation)
-        drawPart(mL, pL, cL, tL, M_LIMB, C_LIMB, px-0.2f, pY+0.6f, pz, 0.3f, 0.3f, 0.3f, wR, faceRot); // L Leg
-        drawPart(mL, pL, cL, tL, M_LIMB, C_LIMB, px+0.2f, pY+0.6f, pz, 0.3f, 0.3f, 0.3f, -wR, faceRot); // R Leg
+        // Body (Blue Tunic)
+        drawMesh(mL, cL, M_BODY, C_BODY, COUNT_BODY, px, heroY, pz, 0.1f, 0.3f, 0.8f, facing);
         
-        // Shield Arm (Left)
-        float sX = px - 0.4f, sZ = pz;
-        if(block) { sX = px; sZ = pz-0.4f; } // Move shield forward
-        drawPart(mL, pL, cL, tL, M_LIMB, C_LIMB, px-0.4f, pY+1.1f, pz, 0.7f, 0.7f, 0.7f, -wR, faceRot);
-        drawPart(mL, pL, cL, tL, M_SHIELD, C_SHIELD, sX, pY+0.6f, sZ, 0.4f, 0.4f, 0.8f, block ? -0.5f : 0, faceRot);
-
-        // Sword Arm (Right)
-        float aR = slash ? -sin(animSlash)*2.0f : wR; // Slash overrides walk
-        drawPart(mL, pL, cL, tL, M_LIMB, C_LIMB, px+0.4f, pY+1.1f, pz, 0.7f, 0.7f, 0.7f, aR, faceRot);
-        drawPart(mL, pL, cL, tL, M_SWORD, C_SWORD, px+0.4f, pY+0.5f, pz-0.4f, 0.8f, 0.8f, 0.9f, aR, faceRot);
+        // Sword Arm (Steel/Flesh)
+        float armRotX = isSlash ? -sin(anim)*2.5f : (sin(walkAnim)*0.5f);
+        drawMesh(mL, cL, M_ARM, C_ARM, COUNT_ARM, px, heroY, pz, 0.8f, 0.8f, 0.8f, facing, armRotX);
+        
+        // Shield Arm (Wood/Iron)
+        float shieldZ = isBlock ? pz + 0.5f : pz;
+        float shieldY = isBlock ? heroY + 0.3f : heroY;
+        float shieldRot = isBlock ? 0.5f : (-sin(walkAnim)*0.5f);
+        drawMesh(mL, cL, M_SHIELD, C_SHIELD, COUNT_SHIELD, px, shieldY, shieldZ, 0.5f, 0.3f, 0.2f, facing, shieldRot);
     }
+    
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1 && !block) slash=true; else if(id==2) block=true; else block=false;
+        if(id==1) isSlash=true; else if(id==2) isBlock=true; else isBlock=false;
     }
 }
 EOF
