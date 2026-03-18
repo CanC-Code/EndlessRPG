@@ -1,65 +1,7 @@
 #!/bin/bash
-echo "Dynamically Generating Assets and C++ Engine..."
+echo "Dynamically Generating C++ Engine..."
 
-# 1. Blender Python Script
-cat << 'EOF' > runtime/build_models.py
-import bpy
-from math import radians
-
-def clean():
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.object.delete()
-
-def export_model(name, r, g, b, build_func):
-    clean()
-    build_func()
-    obj = bpy.context.object
-    bpy.ops.object.modifier_add(type='TRIANGULATE')
-    bpy.ops.object.modifier_apply(modifier=obj.modifiers[-1].name)
-    
-    verts = []
-    mesh = obj.data
-    mesh.calc_loop_triangles()
-    
-    for tri in mesh.loop_triangles:
-        for loop_idx in tri.loops:
-            v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
-            verts.extend([v.co.x, v.co.z, -v.co.y]) # OpenGL Coordinates
-            lum = max(0.2, 0.6 + (v.normal.z * 0.4) + (v.normal.x * 0.1))
-            verts.extend([r * lum, g * lum, b * lum])
-    return verts
-
-v_body = export_model("BODY", 0.1, 0.3, 0.8, lambda: bpy.ops.mesh.primitive_cylinder_add(radius=0.3, depth=0.8, location=(0,0,0.8)))
-v_head = export_model("HEAD", 0.9, 0.7, 0.6, lambda: bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.25, location=(0,0,1.5)))
-v_cape = export_model("CAPE", 0.8, 0.1, 0.1, lambda: (
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0,-0.2,0.9)),
-    setattr(bpy.context.object, 'scale', (0.3, 0.05, 0.6)),
-    setattr(bpy.context.object, 'rotation_euler', (radians(-15),0,0))
-))
-v_sword = export_model("SWORD", 0.7, 0.7, 0.75, lambda: (
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=1.2, location=(0.4, 0.4, 1.0)),
-    setattr(bpy.context.object, 'rotation_euler', (radians(90),0,0))
-))
-v_shield = export_model("SHIELD", 0.4, 0.2, 0.1, lambda: (
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.35, depth=0.1, location=(-0.4, 0.3, 0.9)),
-    setattr(bpy.context.object, 'rotation_euler', (radians(90),radians(90),0))
-))
-v_tree = export_model("TREE", 0.2, 0.6, 0.2, lambda: (
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.15, depth=1.0, location=(0,0,0.5)),
-    bpy.ops.mesh.primitive_cone_add(radius1=0.8, depth=2.0, location=(0,0,2.0)),
-    bpy.ops.object.select_all(action='SELECT'), bpy.ops.object.join()
-))
-
-with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
-    f.write("#pragma once\n")
-    for name, data in [("BODY", v_body), ("HEAD", v_head), ("CAPE", v_cape), ("SWORD", v_sword), ("SHIELD", v_shield), ("TREE", v_tree)]:
-        f.write(f"const float M_{name}[] = {{ {', '.join(map(str, data))} }};\n")
-        f.write(f"const int N_{name} = {len(data)//6};\n")
-EOF
-
-blender --background --python runtime/build_models.py
-
-# 2. C++ CMake and Math Utility
+# 1. CMakeLists
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
 project("procedural_engine")
@@ -69,6 +11,7 @@ find_library(gles3-lib GLESv3)
 target_link_libraries(procedural_engine ${log-lib} ${gles3-lib})
 EOF
 
+# 2. Math Library
 cat << 'EOF' > app/src/main/cpp/MathUtils.h
 #pragma once
 #include <cmath>
@@ -101,7 +44,7 @@ struct Mat4 {
 };
 EOF
 
-# 3. C++ Game Engine
+# 3. Game Engine Core
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
@@ -161,6 +104,7 @@ extern "C" {
         glUniformMatrix4fv(lModl, 1, GL_FALSE, Mat4::identity().m);
         glBindVertexArray(vaoGround); glDrawArrays(GL_TRIANGLES, 0, 6);
 
+        // Infinite World Generation
         glBindVertexArray(vaoTree);
         for(int i=-3; i<=3; i++) {
             for(int j=-3; j<=3; j++) {
@@ -172,6 +116,7 @@ extern "C" {
             }
         }
 
+        // Action & Animation Sequences
         float bob = sin(walkTimer) * 0.08f;
         Mat4 baseTrans = Mat4::translate(pX, bob, pZ).multiply(Mat4::rotateY(pFace));
 
@@ -201,3 +146,7 @@ extern "C" {
     }
 }
 EOF
+
+# Execute the Blender modeler script directly from the engine generator
+echo "Running Headless Blender Pipeline..."
+blender --background --python runtime/build_models.py
