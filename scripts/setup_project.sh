@@ -47,3 +47,36 @@ android {
     externalNativeBuild { cmake { path "src/main/cpp/CMakeLists.txt" } }
 }
 EOF
+
+# Append this to scripts/setup_project.sh
+cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    
+    <android.opengl.GLSurfaceView
+        android:id="@+id/game_surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <ImageView
+        android:id="@+id/thumbstick"
+        android:layout_width="150dp"
+        android:layout_height="150dp"
+        android:layout_alignParentBottom="true"
+        android:layout_margin="30dp"
+        android:src="@drawable/thumbstick_base" />
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentBottom="true"
+        android:layout_alignParentRight="true"
+        android:layout_margin="30dp"
+        android:orientation="horizontal">
+        
+        <Button android:id="@+id/btn_shield" android:text="B" android:layout_width="80dp" android:layout_height="80dp" />
+        <Button android:id="@+id/btn_sword" android:text="A" android:layout_width="80dp" android:layout_height="80dp" android:layout_marginLeft="20dp" />
+    </LinearLayout>
+</RelativeLayout>
+EOF
