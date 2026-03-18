@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Building Project Structure and Placeholders..."
+echo "Scaffolding Full Project Structure..."
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
@@ -18,7 +18,7 @@ rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
-# 2. Root build.gradle
+# 2. build.gradle (Root)
 cat << 'EOF' > build.gradle
 plugins { id 'com.android.application' version '8.2.0' apply false }
 EOF
@@ -39,7 +39,7 @@ android {
 }
 EOF
 
-# 4. CRITICAL: AndroidManifest.xml
+# 4. AndroidManifest.xml
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -50,7 +50,7 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# 5. Placeholder Drawables (Stops AAPT from failing)
+# 5. UI Button Resources
 cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
     <solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/>
@@ -59,6 +59,6 @@ EOF
 
 cat << 'EOF' > app/src/main/res/drawable/action_btn.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="#88000000"/><stroke android:width="2dp" android:color="#CCCCCC"/>
+    <solid android:color="#AA000000"/><stroke android:width="2dp" android:color="#AAAAAA"/>
 </shape>
 EOF
