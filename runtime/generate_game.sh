@@ -1,160 +1,105 @@
 #!/bin/bash
-echo "Generating High-Fidelity Procedural Game Content..."
+echo "Generating Animated 3D Assets..."
 
-# 1. GENERATE UI ASSETS (Using Native Android XML instead of ImageMagick)
-mkdir -p app/src/main/res/drawable
-
+# 1. Native UI Assets
 cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
-<?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="#80FFFFFF"/>
-    <stroke android:width="2dp" android:color="#FFFFFF"/>
+    <solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/>
 </shape>
 EOF
-
 cat << 'EOF' > app/src/main/res/drawable/action_btn.xml
-<?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="#AA000000"/>
-    <stroke android:width="2dp" android:color="#AAAAAA"/>
+    <solid android:color="#88000000"/><stroke android:width="2dp" android:color="#CCCCCC"/>
 </shape>
 EOF
 
-# 2. CREATE AND RUN THE BLENDER PYTHON SCRIPT (Procedural 3D Assets)
+# 2. Blender Procedural Modeler
 cat << 'EOF' > runtime/build_models.py
 import bpy
-import bmesh
 
-# Clear default scene
-bpy.ops.object.select_all(action='SELECT')
-bpy.ops.object.delete()
+def clear_scene():
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete()
 
-# Procedurally generate a Stylized Hero Model
-# Body (Cylinder)
-bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.4, depth=1.2, location=(0, 0, 0.6))
-body = bpy.context.object
+def export_to_header(obj_list, filename):
+    with open(filename, "w") as f:
+        f.write("#pragma once\n")
+        for name, obj in obj_list.items():
+            mesh = obj.data
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.modifier_add(type='TRIANGULATE')
+            bpy.ops.object.modifier_apply(modifier="TRIANGULATE")
+            
+            verts = []
+            for face in mesh.polygons:
+                for v_idx in face.vertices:
+                    v = mesh.vertices[v_idx].co
+                    verts.extend([v.x, v.z, -v.y])
+            
+            f.write(f"const float MESH_{name}[] = {"{ " + ", ".join(map(lambda x: f"{x:.4f}f", verts)) + " };"}\n")
+            f.write(f"const int COUNT_{name} = {len(verts)//3};\n")
 
-# Head (Low-poly stylized icosphere)
-bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.35, location=(0, 0, 1.5))
-head = bpy.context.object
+clear_scene()
 
-# Join meshes
-bpy.ops.object.select_all(action='SELECT')
-bpy.context.view_layer.objects.active = body
-bpy.ops.object.join()
+# Create Hero Torso
+bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=0.4, depth=1.0, location=(0,0,0.5))
+torso = bpy.context.object
 
-# Apply modifiers for high-quality triangulated geometry
-bpy.ops.object.modifier_add(type='BEVEL')
-bpy.context.object.modifiers["Bevel"].width = 0.05
-bpy.ops.object.modifier_add(type='TRIANGULATE')
-bpy.ops.object.modifier_apply(modifier="TRIANGULATE")
+# Create Sword Arm (Pivot at shoulder)
+bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.6, 0, 0.8))
+arm = bpy.context.object
+arm.scale = (0.15, 0.15, 0.6)
 
-# Extract vertex data for C++ Engine
-mesh = body.data
-mesh.calc_loop_triangles()
-
-vertices = []
-normals = []
-
-for tri in mesh.loop_triangles:
-    for loop_index in tri.loops:
-        loop = mesh.loops[loop_index]
-        vertex = mesh.vertices[loop.vertex_index]
-        
-        # Scale and swap axes for OpenGL (Y up, Z depth)
-        vertices.extend([vertex.co.x, vertex.co.z, -vertex.co.y])
-        
-        # Generate basic fake shading based on normals (creates a stylized look)
-        shade = 0.5 + (vertex.normal.z * 0.5)
-        normals.extend([shade, shade, shade, 1.0])
-
-# Write out the C++ Header
-with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
-    f.write("#pragma once\n")
-    f.write(f"const int HERO_VERTEX_COUNT = {int(len(vertices)/3)};\n")
-    f.write("const float HERO_VERTICES[] = {\n")
-    f.write(", ".join(f"{v:.4f}f" for v in vertices))
-    f.write("\n};\n")
-    f.write("const float HERO_COLORS[] = {\n")
-    f.write(", ".join(f"{c:.4f}f" for c in normals))
-    f.write("\n};\n")
+export_to_header({"TORSO": torso, "ARM": arm}, "app/src/main/cpp/GeneratedModels.h")
 EOF
 
-echo "Running Headless Blender..."
 blender --background --python runtime/build_models.py
 
-# 3. INJECT C++ ENGINE (Using the Generated Blender Models)
+# 3. C++ Engine with Animation Logic
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
-#include <vector>
+#include <math.h>
 #include "GeneratedModels.h"
 
-const char* vShader = "#version 300 es\n"
-    "layout(location = 0) in vec4 vPosition; layout(location = 1) in vec4 vColor;"
-    "uniform mat4 uMatrix; out vec4 fColor;"
-    "void main() { gl_Position = uMatrix * vPosition; fColor = vColor; }";
+const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; uniform mat4 m; void main(){gl_Position=m*vec4(p,1.0);}";
+const char* fS = "#version 300 es\nprecision mediump float; out vec4 o; uniform vec4 c; void main(){o=c;}";
 
-const char* fShader = "#version 300 es\n"
-    "precision mediump float; in vec4 fColor; out vec4 fragColor;"
-    "void main() { fragColor = fColor; }";
+GLuint prog;
+float pX=0, pZ=0, anim=0;
+bool slashing=false;
 
-GLuint program;
-float playerX = 0.0f, playerZ = 0.0f;
-
-void drawMesh(GLint matrixLoc, const float* verts, const float* colors, int count, float x, float y, float z) {
-    float matrix[16] = {
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        x - playerX, y, z - playerZ - 8.0f, 1 
-    };
-    glUniformMatrix4fv(matrixLoc, 1, GL_FALSE, matrix);
-    
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, verts);
+void draw(GLint mLoc, GLint cLoc, const float* v, int n, float x, float y, float z, float r, float g, float b, float rot=0) {
+    float s = sin(rot), c = cos(rot);
+    float mat[16] = {c,0,s,0, 0,1,0,0, -s,0,c,0, x-pX,y,z-pZ-10.0f,1};
+    glUniformMatrix4fv(mLoc, 1, GL_FALSE, mat);
+    glUniform4f(cLoc, r, g, b, 1.0f);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, v);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, colors);
-    glEnableVertexAttribArray(1);
-    glDrawArrays(GL_TRIANGLES, 0, count);
+    glDrawArrays(GL_TRIANGLES, 0, n);
 }
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_game_procedural_MainActivity_nativeSurfaceCreated(JNIEnv*, jobject) {
-    GLuint vs = glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs, 1, &vShader, nullptr); glCompileShader(vs);
-    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs, 1, &fShader, nullptr); glCompileShader(fs);
-    program = glCreateProgram();
-    glAttachShader(program, vs); glAttachShader(program, fs);
-    glLinkProgram(program); glUseProgram(program);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_CULL_FACE); // Optimize rendering
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_game_procedural_MainActivity_nativeSurfaceChanged(JNIEnv*, jobject, jint w, jint h) {
-    glViewport(0, 0, w, h);
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_game_procedural_MainActivity_nativeDrawFrame(JNIEnv*, jobject, jfloat inputX, jfloat inputY) {
-    playerX += inputX * 0.15f;
-    playerZ -= inputY * 0.15f;
-
-    // Deep Sky Blue Background
-    glClearColor(0.2f, 0.4f, 0.6f, 1.0f); 
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    GLint mLoc = glGetUniformLocation(program, "uMatrix");
-
-    // Render Ground Plane (Stylized Green)
-    float ground[] = { -50, 0, -50,  50, 0, -50,  -50, 0, 50,  50, 0, 50,  -50, 0, 50,  50, 0, -50 };
-    float gColors[] = { 
-        0.2f,0.6f,0.2f,1.0f,  0.2f,0.6f,0.2f,1.0f,  0.2f,0.6f,0.2f,1.0f,
-        0.2f,0.6f,0.2f,1.0f,  0.2f,0.6f,0.2f,1.0f,  0.2f,0.6f,0.2f,1.0f 
-    };
-    drawMesh(mLoc, ground, gColors, 6, 0.0f, 0.0f, 0.0f);
-
-    // Render Procedural Hero Model generated by Blender
-    drawMesh(mLoc, HERO_VERTICES, HERO_COLORS, HERO_VERTEX_COUNT, playerX, 0.0f, playerZ);
+extern "C" {
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
+        GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
+        GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
+        prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog);
+        glUseProgram(prog); glEnable(GL_DEPTH_TEST);
+    }
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) { glViewport(0,0,w,h); }
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy) {
+        pX += ix*0.1f; pZ -= iy*0.1f;
+        if(slashing) { anim += 0.2f; if(anim > 3.14f){ slashing=false; anim=0; } }
+        glClearColor(0.2f, 0.2f, 0.3f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        GLint mL = glGetUniformLocation(prog, "m"), cL = glGetUniformLocation(prog, "c");
+        
+        // Draw Hero
+        draw(mL, cL, MESH_TORSO, COUNT_TORSO, pX, 0, pZ, 0.8f, 0.2f, 0.2f);
+        float armRot = slashing ? sin(anim) * 1.5f : 0;
+        draw(mL, cL, MESH_ARM, COUNT_ARM, pX+0.5f, 0.2f, pZ, 0.7f, 0.7f, 0.9f, armRot);
+    }
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
+        if(id == 1) slashing = true;
+    }
 }
 EOF
-
-echo "Engine Infilled and Ready."
