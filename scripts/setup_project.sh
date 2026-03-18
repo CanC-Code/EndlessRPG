@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Building Project Structure..."
+echo "Building Project Structure and Placeholders..."
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
@@ -18,7 +18,7 @@ rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
-# 2. build.gradle (Root)
+# 2. Root build.gradle
 cat << 'EOF' > build.gradle
 plugins { id 'com.android.application' version '8.2.0' apply false }
 EOF
@@ -39,21 +39,18 @@ android {
 }
 EOF
 
-# 4. AndroidManifest.xml (Fixed Path)
+# 4. CRITICAL: AndroidManifest.xml
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
         <activity android:name="com.game.procedural.MainActivity" android:exported="true" android:screenOrientation="landscape">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
     </application>
 </manifest>
 EOF
 
-# 5. UI Drawables (Required for build to pass)
+# 5. Placeholder Drawables (Stops AAPT from failing)
 cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
     <solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/>
