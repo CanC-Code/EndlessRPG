@@ -1,105 +1,75 @@
 #!/bin/bash
-echo "Infilling 3D Game Engine..."
+echo "Enhancing 3D Engine & Procedural Assets..."
 
-# 1. GENERATE ASSETS (The "Smart" Way)
-# Generate a stylized grass texture using ImageMagick
-convert -size 256x256 plasma:fractal -colorspace Gray -negate -threshold 50% \
-        -fill "#4CAF50" -opaque white -fill "#388E3C" -opaque black \
-        -blur 0x1 app/src/main/res/drawable/grass_tex.png
+# 1. SMART ASSET GENERATION (ImageMagick Procedural Art)
+# Create a 'Dithered' stylized Grass Texture
+convert -size 512x512 plasma:fractal \
+    \( +clone -charcoal 1 -blur 0x2 -colorspace Gray -auto-level \) \
+    -compose Overlay -composite \
+    -fill "#2D5A27" -tint 100 \
+    -modulate 100,150,100 \
+    app/src/main/res/drawable/grass_tex.png
 
-# 2. INJECT JAVA RENDERER & TOUCH LOGIC
-cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
-package com.game.procedural;
+# Create a Stylized Cloud Map (Perlin-based)
+convert -size 1024x512 canvas:none \
+    -sparse-color Barycentric '0,0 white %w,%h white' \
+    -plasma 0x0 -blur 0x15 -shade 120x45 -auto-level \
+    -fill "rgba(255,255,255,0.8)" -opaque white \
+    app/src/main/res/drawable/sky_clouds.png
 
-import android.app.Activity;
-import android.opengl.GLSurfaceView;
-import android.os.Bundle;
-import android.view.MotionEvent;
-import android.view.View;
-import javax.microedition.khronos.egl.EGLConfig;
-import javax.microedition.khronos.opengles.GL10;
-
-public class MainActivity extends Activity implements GLSurfaceView.Renderer {
-    private GLSurfaceView glView;
-    private float touchX, touchY;
-
-    static { System.loadLibrary("procedural_engine"); }
-    private native void nativeSurfaceCreated();
-    private native void nativeSurfaceChanged(int w, int h);
-    private native void nativeDrawFrame(float inputX, float inputY);
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        
-        glView = findViewById(R.id.game_surface);
-        glView.setEGLContextClientVersion(3);
-        glView.setRenderer(this);
-
-        // Thumbstick Logic (Simplified)
-        findViewById(R.id.thumbstick).setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_MOVE) {
-                touchX = (event.getX() / v.getWidth()) * 2 - 1;
-                touchY = (event.getY() / v.getHeight()) * 2 - 1;
-            } else if (event.getAction() == MotionEvent.ACTION_UP) {
-                touchX = 0; touchY = 0;
-            }
-            return true;
-        });
-    }
-
-    @Override public void onSurfaceCreated(GL10 gl, EGLConfig config) { nativeSurfaceCreated(); }
-    @Override public void onSurfaceChanged(GL10 gl, int w, int h) { nativeSurfaceChanged(w, h); }
-    @Override public void onDrawFrame(GL10 gl) { nativeDrawFrame(touchX, touchY); }
-}
-EOF
-
-# 3. INJECT C++ ENGINE (OpenGL ES 3.0)
+# 2. INJECT ENHANCED C++ ENGINE
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <vector>
-#include <string>
+#include <cmath>
 #include <android/log.h>
 
 #define LOG_TAG "GameEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
-// Simple Shaders for that N64/Retro Look
+// Updated Shaders: Supports Vertex Coloring for terrain depth
 const char* vShader = "#version 300 es\n"
     "layout(location = 0) in vec4 vPosition;"
+    "layout(location = 1) in vec4 vColor;"
     "uniform mat4 uMatrix;"
-    "void main() { gl_Position = uMatrix * vPosition; }";
+    "out vec4 fColor;"
+    "void main() { "
+    "  gl_Position = uMatrix * vPosition;"
+    "  fColor = vColor;"
+    "}";
 
 const char* fShader = "#version 300 es\n"
     "precision mediump float;"
+    "in vec4 fColor;"
     "out vec4 fragColor;"
-    "uniform vec4 uColor;"
-    "void main() { fragColor = uColor; }";
+    "void main() { fragColor = fColor; }";
 
 GLuint program;
-float cameraZ = -5.0f;
-float playerX = 0.0f;
-float playerZ = 0.0f;
+float playerX = 0.0f, playerZ = 0.0f;
 
-GLuint compileShader(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCreateShader(shader);
-    glCompileShader(shader);
-    return shader;
+// Helper to create a procedural tree mesh (Simple low-poly cylinder + sphere)
+void drawProceduralTree(GLint matrixLoc, float x, float z) {
+    // Tree logic will go here in next iteration
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_game_procedural_MainActivity_nativeSurfaceCreated(JNIEnv*, jobject) {
-    GLuint vs = compileShader(GL_VERTEX_SHADER, vShader);
-    GLuint fs = compileShader(GL_FRAGMENT_SHADER, fShader);
+    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vs, 1, &vShader, nullptr);
+    glCompileShader(vs);
+
+    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fs, 1, &fShader, nullptr);
+    glCompileShader(fs);
+
     program = glCreateProgram();
     glAttachShader(program, vs);
     glAttachShader(program, fs);
     glLinkProgram(program);
     glUseProgram(program);
+    
+    glEnable(GL_DEPTH_TEST);
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -109,34 +79,39 @@ Java_com_game_procedural_MainActivity_nativeSurfaceChanged(JNIEnv*, jobject, jin
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_game_procedural_MainActivity_nativeDrawFrame(JNIEnv*, jobject, jfloat inputX, jfloat inputY) {
-    // 1. Update Player Position based on Thumbstick
-    playerX += inputX * 0.1f;
-    playerZ -= inputY * 0.1f;
+    playerX += inputX * 0.15f;
+    playerZ -= inputY * 0.15f;
 
-    // 2. Clear Screen (Sky Blue)
-    glClearColor(0.53f, 0.81f, 0.92f, 1.0f);
+    // Sky Gradient
+    glClearColor(0.4f, 0.7f, 1.0f, 1.0f); 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // 3. Render Ground (Green Plane)
-    GLint colorLoc = glGetUniformLocation(program, "uColor");
     GLint matrixLoc = glGetUniformLocation(program, "uMatrix");
 
-    // Very basic projection/view matrix (Identity for now, but shifted)
+    // Camera/View Matrix (Perspective approximation)
+    float aspect = 1.7f; // Standard phone aspect
     float matrix[16] = {
-        1, 0, 0, 0,
-        0, 1, 0, 0,
-        0, 0, 1, 0,
-        -playerX, -1.0f, playerZ + cameraZ, 1
+        1.0f/aspect, 0, 0, 0,
+        0, 1.5f, 0.5f, 0, // Tilt for top-down feel
+        0, -0.5f, 1, 0,
+        -playerX, -1.5f, playerZ - 8.0f, 1
     };
-    
     glUniformMatrix4fv(matrixLoc, 1, GL_FALSE, matrix);
-    glUniform4f(colorLoc, 0.1f, 0.8f, 0.1f, 1.0f); // Grass Green
 
-    float vertices[] = { -10, 0, -10,  10, 0, -10,  -10, 0, 10,  10, 0, 10 };
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, vertices);
+    // Ground Vertices with "Depth Coloring" (Darker green in distance)
+    float ground[] = { 
+        -50, 0, -50,   50, 0, -50,  -50, 0, 50,   50, 0, 50 
+    };
+    float colors[] = {
+        0.1f, 0.5f, 0.1f, 1.0f,  0.1f, 0.5f, 0.1f, 1.0f,
+        0.2f, 0.7f, 0.2f, 1.0f,  0.2f, 0.7f, 0.2f, 1.0f
+    };
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, ground);
     glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, colors);
+    glEnableVertexAttribArray(1);
+    
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 EOF
-
-echo "Engine Infilled! Ready for Action trigger."
