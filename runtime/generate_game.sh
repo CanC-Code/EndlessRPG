@@ -22,29 +22,36 @@ def export_part(name, build_func):
     for tri in mesh.loop_triangles:
         for loop_idx in tri.loops:
             vert = mesh.vertices[mesh.loops[loop_idx].vertex_index]
+            # Fixed coordinate mapping for OpenGL
             v.extend([vert.co.x, vert.co.z, -vert.co.y])
             lum = 0.5 + (vert.normal.z * 0.4)
             c.extend([lum, lum, lum, 1.0])
     return v, c
 
-# Character Components
-v_hero, c_hero = export_part("HERO", lambda: (
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0,0,1)), # Body
-    bpy.context.object.scale.set((0.3, 0.2, 0.5)),
-    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.25, location=(0,0,1.8)), # Head
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0,-0.2,1.2)), # Cape
-    bpy.context.object.scale.set((0.3, 0.05, 0.6)),
-    bpy.ops.object.select_all(action='SELECT'),
+# Refactored build functions to use proper assignment instead of invalid .set() calls
+def build_hero():
+    # Body
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0,0,1))
+    bpy.context.object.scale = (0.3, 0.2, 0.5)
+    # Head
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.25, location=(0,0,1.8))
+    # Cape
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0,-0.2,1.2))
+    bpy.context.object.scale = (0.3, 0.05, 0.6)
+    
+    bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.join()
-))
 
-v_arm, c_arm = export_part("ARM", lambda: (
-    bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0.5, 0, 1.2)),
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.03, depth=1.2, location=(0.5, 0.2, 1.2)),
-    bpy.context.object.rotation_euler.set((radians(90), 0, 0)),
-    bpy.ops.object.select_all(action='SELECT'),
+def build_arm():
+    bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0.5, 0, 1.2))
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.03, depth=1.2, location=(0.5, 0.2, 1.2))
+    bpy.context.object.rotation_euler = (radians(90), 0, 0)
+    
+    bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.join()
-))
+
+v_hero, c_hero = export_part("HERO", build_hero)
+v_arm, c_arm = export_part("ARM", build_arm)
 
 with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
     f.write("#pragma once\n")
@@ -58,8 +65,17 @@ EOF
 
 blender --background --python runtime/build_models.py
 
-# 2. C++ ENGINE (VAO-Optimized for stability)
+# 2. CMakeLists.txt
+cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
+cmake_minimum_required(VERSION 3.22.1)
+project("procedural_engine")
+add_library(procedural_engine SHARED native-lib.cpp)
+find_library(log-lib log)
+find_library(gles3-lib GLESv3)
+target_link_libraries(procedural_engine ${log-lib} ${gles3-lib})
+EOF
 
+# 3. Native Engine Source
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
@@ -125,19 +141,16 @@ extern "C" {
         glClearColor(0.5f, 0.8f, 1.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         GLint mL = glGetUniformLocation(prog, "m"), cL = glGetUniformLocation(prog, "bc");
 
-        // Ground
         float matG[16] = { 1,0,0,0, 0,1,0,0, 0,0,1,0, -px, -1.0f, -pz-12.0f, 5.0f };
         glUniformMatrix4fv(mL, 1, GL_FALSE, matG); glUniform4f(cL, 0.2f, 0.5f, 0.2f, 1.0f);
         glBindVertexArray(groundVAO); glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // Hero
         float face = atan2(-ix, -iy);
         float s = sin(face), c = cos(face);
         float matH[16] = { c,0,s,0, 0,1,0,0, -s,0,c,0, 0, sin(walk)*0.1f, -12.0f, 5.0f };
         glUniformMatrix4fv(mL, 1, GL_FALSE, matH); glUniform4f(cL, 0.1f, 0.3f, 0.8f, 1.0f);
         glBindVertexArray(heroVAO); glDrawArrays(GL_TRIANGLES, 0, N_HERO);
 
-        // Sword
         float matA[16] = { c,0,s,0, 0,1,0,0, -s,0,c,0, 0, sin(walk)*0.1f + (slash?-sin(anim)*0.5f:0), -12.0f, 5.0f };
         glUniformMatrix4fv(mL, 1, GL_FALSE, matA); glUniform4f(cL, 0.7f, 0.7f, 0.7f, 1.0f);
         glBindVertexArray(armVAO); glDrawArrays(GL_TRIANGLES, 0, N_ARM);
