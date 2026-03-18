@@ -1,75 +1,116 @@
 #!/bin/bash
-echo "Enhancing 3D Engine & Procedural Assets..."
+echo "Initializing High-Fidelity Procedural Asset Pipeline..."
 
-# 1. SMART ASSET GENERATION (ImageMagick Procedural Art)
-# Create a 'Dithered' stylized Grass Texture
-convert -size 512x512 plasma:fractal \
-    \( +clone -charcoal 1 -blur 0x2 -colorspace Gray -auto-level \) \
-    -compose Overlay -composite \
-    -fill "#2D5A27" -tint 100 \
-    -modulate 100,150,100 \
-    app/src/main/res/drawable/grass_tex.png
+# 1. CREATE THE BLENDER PYTHON SCRIPT
+cat << 'EOF' > runtime/build_models.py
+import bpy
+import bmesh
 
-# Create a Stylized Cloud Map (Perlin-based)
-convert -size 1024x512 canvas:none \
-    -sparse-color Barycentric '0,0 white %w,%h white' \
-    -plasma 0x0 -blur 0x15 -shade 120x45 -auto-level \
-    -fill "rgba(255,255,255,0.8)" -opaque white \
-    app/src/main/res/drawable/sky_clouds.png
+# Clear default scene
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete()
 
-# 2. INJECT ENHANCED C++ ENGINE
+# Procedurally generate a Stylized Hero Model
+# Body
+bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.4, depth=1.2, location=(0, 0, 0.6))
+body = bpy.context.object
+
+# Head (Low-poly stylized icosphere)
+bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.35, location=(0, 0, 1.5))
+head = bpy.context.object
+
+# Join meshes
+bpy.ops.object.select_all(action='SELECT')
+bpy.context.view_layer.objects.active = body
+bpy.ops.object.join()
+
+# Apply a Bevel modifier for high-quality light catching edges
+bpy.ops.object.modifier_add(type='BEVEL')
+bpy.context.object.modifiers["Bevel"].width = 0.05
+bpy.ops.object.modifier_add(type='TRIANGULATE')
+bpy.ops.object.modifier_apply(modifier="TRIANGULATE")
+
+# Extract vertex data for C++ Engine
+mesh = body.data
+mesh.calc_loop_triangles()
+
+vertices = []
+normals = []
+
+for tri in mesh.loop_triangles:
+    for loop_index in tri.loops:
+        loop = mesh.loops[loop_index]
+        vertex = mesh.vertices[loop.vertex_index]
+        
+        # Scale and swap axes for OpenGL (Y up, Z depth)
+        vertices.extend([vertex.co.x, vertex.co.z, -vertex.co.y])
+        # Generate basic fake shading based on normals
+        shade = 0.5 + (vertex.normal.z * 0.5)
+        normals.extend([shade, shade, shade, 1.0])
+
+# Write out the C++ Header
+with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
+    f.write("#pragma once\n")
+    f.write(f"const int HERO_VERTEX_COUNT = {int(len(vertices)/3)};\n")
+    f.write("const float HERO_VERTICES[] = {\n")
+    f.write(", ".join(f"{v:.4f}f" for v in vertices))
+    f.write("\n};\n")
+    f.write("const float HERO_COLORS[] = {\n")
+    f.write(", ".join(f"{c:.4f}f" for c in normals))
+    f.write("\n};\n")
+
+print("Procedural Models Exported to C++ Header.")
+EOF
+
+# 2. RUN HEADLESS BLENDER TO GENERATE ASSETS
+echo "Running Headless Blender..."
+blender --background --python runtime/build_models.py
+
+# 3. INJECT C++ ENGINE (Now using the Generated Models)
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <vector>
 #include <cmath>
-#include <android/log.h>
+#include "GeneratedModels.h" // Import the Blender-generated mesh
 
-#define LOG_TAG "GameEngine"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-
-// Updated Shaders: Supports Vertex Coloring for terrain depth
 const char* vShader = "#version 300 es\n"
-    "layout(location = 0) in vec4 vPosition;"
-    "layout(location = 1) in vec4 vColor;"
-    "uniform mat4 uMatrix;"
-    "out vec4 fColor;"
-    "void main() { "
-    "  gl_Position = uMatrix * vPosition;"
-    "  fColor = vColor;"
-    "}";
+    "layout(location = 0) in vec4 vPosition; layout(location = 1) in vec4 vColor;"
+    "uniform mat4 uMatrix; out vec4 fColor;"
+    "void main() { gl_Position = uMatrix * vPosition; fColor = vColor; }";
 
 const char* fShader = "#version 300 es\n"
-    "precision mediump float;"
-    "in vec4 fColor;"
-    "out vec4 fragColor;"
+    "precision mediump float; in vec4 fColor; out vec4 fragColor;"
     "void main() { fragColor = fColor; }";
 
 GLuint program;
 float playerX = 0.0f, playerZ = 0.0f;
 
-// Helper to create a procedural tree mesh (Simple low-poly cylinder + sphere)
-void drawProceduralTree(GLint matrixLoc, float x, float z) {
-    // Tree logic will go here in next iteration
+void drawMesh(GLint matrixLoc, const float* verts, const float* colors, int count, float x, float y, float z) {
+    float matrix[16] = {
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        x - playerX, y, z - playerZ - 8.0f, 1 
+    };
+    glUniformMatrix4fv(matrixLoc, 1, GL_FALSE, matrix);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, verts);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, colors);
+    glEnableVertexAttribArray(1);
+    glDrawArrays(GL_TRIANGLES, 0, count);
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_game_procedural_MainActivity_nativeSurfaceCreated(JNIEnv*, jobject) {
-    GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vs, 1, &vShader, nullptr);
-    glCompileShader(vs);
-
-    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fs, 1, &fShader, nullptr);
-    glCompileShader(fs);
-
+    GLuint vs = glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs, 1, &vShader, nullptr); glCompileShader(vs);
+    GLuint fs = glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs, 1, &fShader, nullptr); glCompileShader(fs);
     program = glCreateProgram();
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glLinkProgram(program);
-    glUseProgram(program);
-    
+    glAttachShader(program, vs); glAttachShader(program, fs);
+    glLinkProgram(program); glUseProgram(program);
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE); // Optimize rendering
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -82,36 +123,13 @@ Java_com_game_procedural_MainActivity_nativeDrawFrame(JNIEnv*, jobject, jfloat i
     playerX += inputX * 0.15f;
     playerZ -= inputY * 0.15f;
 
-    // Sky Gradient
-    glClearColor(0.4f, 0.7f, 1.0f, 1.0f); 
+    glClearColor(0.2f, 0.3f, 0.3f, 1.0f); // Darker atmospheric background
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    GLint mLoc = glGetUniformLocation(program, "uMatrix");
 
-    GLint matrixLoc = glGetUniformLocation(program, "uMatrix");
-
-    // Camera/View Matrix (Perspective approximation)
-    float aspect = 1.7f; // Standard phone aspect
-    float matrix[16] = {
-        1.0f/aspect, 0, 0, 0,
-        0, 1.5f, 0.5f, 0, // Tilt for top-down feel
-        0, -0.5f, 1, 0,
-        -playerX, -1.5f, playerZ - 8.0f, 1
-    };
-    glUniformMatrix4fv(matrixLoc, 1, GL_FALSE, matrix);
-
-    // Ground Vertices with "Depth Coloring" (Darker green in distance)
-    float ground[] = { 
-        -50, 0, -50,   50, 0, -50,  -50, 0, 50,   50, 0, 50 
-    };
-    float colors[] = {
-        0.1f, 0.5f, 0.1f, 1.0f,  0.1f, 0.5f, 0.1f, 1.0f,
-        0.2f, 0.7f, 0.2f, 1.0f,  0.2f, 0.7f, 0.2f, 1.0f
-    };
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, ground);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 0, colors);
-    glEnableVertexAttribArray(1);
-    
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    // Render Procedural Hero Model generated by Blender
+    drawMesh(mLoc, HERO_VERTICES, HERO_COLORS, HERO_VERTEX_COUNT, playerX, -1.0f, playerZ);
 }
 EOF
+
+echo "Asset Pipeline and Engine updated successfully."
