@@ -1,21 +1,29 @@
 #!/bin/bash
-echo "Generating 3D Assets and Perspective Engine..."
+echo "Infilling 3D Assets and Engine Logic..."
 
-# 1. Procedural 3D Modeler (Blender)
+# 1. Native UI Assets
+cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/>
+</shape>
+EOF
+cat << 'EOF' > app/src/main/res/drawable/action_btn.xml
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="#88000000"/><stroke android:width="2dp" android:color="#CCCCCC"/>
+</shape>
+EOF
+
+# 2. Blender Mesh Generator
 cat << 'EOF' > runtime/build_models.py
 import bpy
 
-def export_obj(name, location, scale, mesh_type):
+def export_part(name, mesh_func):
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
-    if mesh_type == "cube": bpy.ops.mesh.primitive_cube_add(size=1.0, location=location)
-    elif mesh_type == "cylinder": bpy.ops.mesh.primitive_cylinder_add(radius=0.5, depth=1.0, location=location)
-    
+    mesh_func()
     obj = bpy.context.object
-    obj.scale = scale
     bpy.ops.object.modifier_add(type='TRIANGULATE')
     bpy.ops.object.modifier_apply(modifier="TRIANGULATE")
-    
     verts = []
     for face in obj.data.polygons:
         for v_idx in face.vertices:
@@ -23,50 +31,37 @@ def export_obj(name, location, scale, mesh_type):
             verts.extend([v.x, v.z, -v.y])
     return verts
 
-hero_body = export_obj("BODY", (0,0,1), (0.4, 0.4, 0.8), "cylinder")
-hero_arm = export_obj("ARM", (0.5, 0, 1.2), (0.1, 0.1, 0.6), "cube")
-hero_shield = export_obj("SHIELD", (-0.5, 0.2, 1.0), (0.4, 0.05, 0.4), "cube")
-
+body = export_part("BODY", lambda: bpy.ops.mesh.primitive_cylinder_add(radius=0.4, depth=1.0, location=(0,0,0.5)))
+arm = export_part("ARM", lambda: bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0.6, 0, 0.8)))
+# Arm scale
 with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
     f.write("#pragma once\n")
-    f.write(f"const float M_BODY[] = {{ {', '.join(map(str, hero_body))} }};\n")
-    f.write(f"const int C_BODY = {len(hero_body)//3};\n")
-    f.write(f"const float M_ARM[] = {{ {', '.join(map(str, hero_arm))} }};\n")
-    f.write(f"const int C_ARM = {len(hero_arm)//3};\n")
-    f.write(f"const float M_SHIELD[] = {{ {', '.join(map(str, hero_shield))} }};\n")
-    f.write(f"const int C_SHIELD = {len(hero_shield)//3};\n")
+    f.write(f"const float M_BODY[] = {{ {', '.join(map(str, body))} }};\n")
+    f.write(f"const int C_BODY = {len(body)//3};\n")
+    f.write(f"const float M_ARM[] = {{ {', '.join(map(str, arm))} }};\n")
+    f.write(f"const int C_ARM = {len(arm)//3};\n")
 EOF
 
 blender --background --python runtime/build_models.py
 
-# 2. Native C++ Engine with Fixed Camera
+# 3. C++ Engine with Correct Depth/Camera
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <math.h>
 #include "GeneratedModels.h"
 
-const char* vS = "#version 300 es\n"
-"layout(location=0) in vec3 p;\n"
-"uniform mat4 uM;\n"
-"void main() { gl_Position = uM * vec4(p, 1.0); }";
+const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; uniform mat4 m; void main(){gl_Position=m*vec4(p,1.0);}";
+const char* fS = "#version 300 es\nprecision mediump float; out vec4 o; uniform vec4 c; void main(){o=c;}";
 
-const char* fS = "#version 300 es\n"
-"precision mediump float; out vec4 o; uniform vec4 c; void main(){ o=c; }";
-
-GLuint prg;
+GLuint prog;
 float px=0, pz=0, anim=0;
-bool slash=false, block=false;
+bool slash=false;
 
 void draw(GLint mL, GLint cL, const float* v, int n, float x, float y, float z, float r, float g, float b, float ry=0) {
     float s = sin(ry), c = cos(ry);
-    // Matrix: Perspective + Translation + Rotation
-    float mat[16] = {
-        c, 0, s, 0,
-        0, 1.5f, 0, 0, // Aspect/Y stretch
-        -s, 0, c, 0,
-        x-px, y-1.5f, z-pz-10.0f, 5.0f // W-coord for perspective
-    };
+    // Modified perspective matrix for visibility
+    float mat[16] = {c,0,s,0, 0,1.2f,0,0, -s,0,c,0, x-px, y-1.0f, z-pz-8.0f, 4.0f};
     glUniformMatrix4fv(mL, 1, GL_FALSE, mat);
     glUniform4f(cL, r, g, b, 1.0f);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, v);
@@ -78,30 +73,22 @@ extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
         GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
         GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
-        prg=glCreateProgram(); glAttachShader(prg,vs); glAttachShader(prg,fs); glLinkProgram(prg);
-        glUseProgram(prg); glEnable(GL_DEPTH_TEST);
+        prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog);
+        glUseProgram(prog); glEnable(GL_DEPTH_TEST);
     }
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) { glViewport(0,0,w,h); }
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy) {
-        if(!block) { px += ix*0.15f; pz -= iy*0.15f; }
-        if(slash) { anim += 0.2f; if(anim > 3.14f) { slash=false; anim=0; } }
-
-        glClearColor(0.4f, 0.6f, 0.9f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        GLint mL = glGetUniformLocation(prg, "uM"), cL = glGetUniformLocation(prg, "c");
-
-        // Ground
+        px += ix*0.1f; pz -= iy*0.1f;
+        if(slash) { anim+=0.2f; if(anim>3.14f){ slash=false; anim=0; } }
+        glClearColor(0.4f, 0.7f, 1.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        GLint mL = glGetUniformLocation(prog,"m"), cL = glGetUniformLocation(prog,"c");
         float grd[] = {-50,0,-50, 50,0,-50, -50,0,50, 50,0,50, -50,0,50, 50,0,-50};
-        draw(mL, cL, grd, 6, 0, 0, 0, 0.2f, 0.6f, 0.2f);
-
-        // Player Parts
-        draw(mL, cL, M_BODY, C_BODY, px, 0, pz, 0.8f, 0.2f, 0.2f);
-        float aR = slash ? -sin(anim)*2.0f : 0;
-        draw(mL, cL, M_ARM, C_ARM, px+0.5f, 0.2f, pz, 0.7f, 0.7f, 0.8f, aR);
-        float sX = block ? px : px-0.6f;
-        draw(mL, cL, M_SHIELD, C_SHIELD, sX, 0.3f, pz+0.5f, 0.3f, 0.3f, 0.6f);
+        draw(mL, cL, grd, 6, 0, 0, 0, 0.2f, 0.6f, 0.2f); // Ground
+        draw(mL, cL, M_BODY, C_BODY, px, 0, pz, 0.8f, 0.1f, 0.1f); // Player
+        draw(mL, cL, M_ARM, C_ARM, px+0.5f, 0.2f, pz, 0.7f, 0.7f, 0.7f, slash?sin(anim):0); // Arm
     }
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1) slash=true; else if(id==2) block=true; else block=false;
+        if(id==1) slash=true;
     }
 }
 EOF
