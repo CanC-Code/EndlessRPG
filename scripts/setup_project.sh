@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Scaffolding Optimized Android Structure..."
+echo "Scaffolding Robust Project Structure..."
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
@@ -7,7 +7,7 @@ mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
 mkdir -p runtime/
 
-# 1. Root settings.gradle
+# 1. ROOT settings.gradle (Fixes 'Directory does not contain a Gradle build')
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
 dependencyResolutionManagement { 
@@ -18,7 +18,7 @@ rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
-# 2. Root build.gradle
+# 2. ROOT build.gradle
 cat << 'EOF' > build.gradle
 plugins { id 'com.android.application' version '8.2.0' apply false }
 EOF
@@ -39,7 +39,7 @@ android {
 }
 EOF
 
-# 4. Android Manifest
+# 4. AndroidManifest.xml
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -50,7 +50,7 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# 5. UI Resources
+# 5. UI Drawables (Placeholder drawables to prevent AAPT crash)
 cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
     <solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/>
