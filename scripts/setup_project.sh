@@ -1,25 +1,38 @@
 #!/bin/bash
-echo "Expanding Scaffolding with Action Controls..."
+echo "Fixing Gradle Plugin Resolution..."
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
 
-# settings.gradle
+# 1. settings.gradle (Crucial for plugin resolution)
 cat << 'EOF' > settings.gradle
-pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { 
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() } 
+    repositories { google(); mavenCentral() }
 }
 rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
-# app/build.gradle
+# 2. Root build.gradle (The "Bridge")
+cat << 'EOF' > build.gradle
+plugins {
+    id 'com.android.application' version '8.2.0' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.0' apply false
+}
+EOF
+
+# 3. app/build.gradle
 cat << 'EOF' > app/build.gradle
-apply plugin: 'com.android.application'
+plugins {
+    id 'com.android.application'
+}
+
 android {
     namespace 'com.game.procedural'
     compileSdk 34
@@ -33,7 +46,7 @@ android {
 }
 EOF
 
-# CMakeLists.txt
+# 4. CMakeLists.txt (Linker fix)
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
 project("procedural_engine")
@@ -43,7 +56,7 @@ find_library(gles3-lib GLESv3)
 target_link_libraries(procedural_engine ${log-lib} ${gles3-lib})
 EOF
 
-# MainActivity.java
+# 5. MainActivity.java
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
@@ -89,24 +102,4 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { onChanged(w, h); }
     @Override public void onDrawFrame(GL10 gl) { onDraw(tX, tY); }
 }
-EOF
-
-# activity_main.xml
-cat << 'EOF' > app/src/main/res/layout/activity_main.xml
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent">
-    <android.opengl.GLSurfaceView android:id="@+id/game_surface"
-        android:layout_width="match_parent" android:layout_height="match_parent" />
-    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp"
-        android:layout_alignParentBottom="true" android:layout_margin="30dp"
-        android:background="@drawable/thumbstick_base" />
-    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:layout_alignParentBottom="true" android:layout_alignParentRight="true"
-        android:layout_margin="30dp" android:orientation="horizontal">
-        <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp"
-            android:layout_marginRight="15dp" android:text="B" android:background="@drawable/action_btn" />
-        <Button android:id="@+id/btn_sword" android:layout_width="90dp" android:layout_height="90dp"
-            android:text="A" android:background="@drawable/action_btn" />
-    </LinearLayout>
-</RelativeLayout>
 EOF
