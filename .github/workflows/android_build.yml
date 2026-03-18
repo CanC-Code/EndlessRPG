@@ -18,7 +18,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Portable Blender
+      - name: Install Portable Blender (Fast)
         run: |
           curl -L https://mirrors.ocf.berkeley.edu/blender/release/Blender4.0/blender-4.0.2-linux-x64.tar.xz -o blender.tar.xz
           tar -xvf blender.tar.xz --strip-components=1
@@ -33,7 +33,7 @@ jobs:
           ./runtime/generate_game.sh
 
       - name: Initialize Gradle Wrapper
-        run: gradle wrapper # This creates the 'gradlew' file
+        run: gradle wrapper
 
       - name: Build Debug APK
         run: |
