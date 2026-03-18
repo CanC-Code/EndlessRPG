@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Dynamically Generating C++ Engine..."
+echo "Dynamically Generating C++ Engine with Combat Logic..."
 
 # 1. CMakeLists
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
@@ -11,7 +11,7 @@ find_library(gles3-lib GLESv3)
 target_link_libraries(procedural_engine ${log-lib} ${gles3-lib})
 EOF
 
-# 2. Math Library
+# 2. Math & Collision Library
 cat << 'EOF' > app/src/main/cpp/MathUtils.h
 #pragma once
 #include <cmath>
@@ -42,12 +42,22 @@ struct Mat4 {
         res.m[5]=c; res.m[6]=s; res.m[9]=-s; res.m[10]=c; return res;
     }
 };
+
+// Simple Circle Collision
+bool checkCollision(float x1, float z1, float r1, float x2, float z2, float r2) {
+    float dx = x1 - x2;
+    float dz = z1 - z2;
+    float distance = sqrt(dx * dx + dz * dz);
+    return distance < (r1 + r2);
+}
 EOF
 
-# 3. Game Engine Core
+# 3. Game Engine Core (Now with Enemies and Hit Detection)
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
+#include <vector>
+#include <cstdlib>
 #include "GeneratedModels.h"
 #include "MathUtils.h"
 
@@ -57,7 +67,14 @@ const char* fS = "#version 300 es\nprecision mediump float; in vec3 vCol; out ve
 GLuint prog, vaoBody, vaoHead, vaoCape, vaoSword, vaoShield, vaoTree, vaoGround;
 float pX = 0, pZ = 0, pFace = 0, walkTimer = 0, slashTimer = 0;
 volatile bool isSlashing = false, isBlocking = false;
+int playerHealth = 100;
 Mat4 projMatrix;
+
+struct Enemy {
+    float x, z;
+    bool active;
+};
+std::vector<Enemy> enemies;
 
 GLuint createVAO(const float* data, int numVerts) {
     GLuint vao, vbo; glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
@@ -82,6 +99,11 @@ extern "C" {
         float g[] = { -100,0,-100, 0.2f,0.5f,0.2f, 100,0,-100, 0.2f,0.5f,0.2f, -100,0,100, 0.2f,0.5f,0.2f,
                        100,0,-100, 0.2f,0.5f,0.2f, 100,0,100, 0.2f,0.5f,0.2f, -100,0,100, 0.2f,0.5f,0.2f };
         vaoGround = createVAO(g, 6);
+
+        // Spawn initial enemies
+        for(int i=0; i<5; i++) {
+            enemies.push_back({(float)(rand()%20 - 10), (float)(rand()%20 - 10), true});
+        }
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
@@ -92,7 +114,31 @@ extern "C" {
         bool moving = (fabs(ix) > 0.05f || fabs(iy) > 0.05f);
         if(!isBlocking && moving) { pX += ix * 0.15f; pZ -= iy * 0.15f; walkTimer += 0.2f; pFace = atan2(-ix, -iy); } 
         else if (!moving) { walkTimer = 0; }
-        if(isSlashing) { slashTimer += 0.3f; if(slashTimer > 3.14f) { isSlashing = false; slashTimer = 0; } }
+        
+        // Combat Logic
+        if(isSlashing) { 
+            slashTimer += 0.3f; 
+            if(slashTimer > 3.14f) { isSlashing = false; slashTimer = 0; }
+            
+            // Hit Detection - Check if enemies are hit by the slash
+            float hitReachX = pX + sin(pFace) * 1.5f;
+            float hitReachZ = pZ - cos(pFace) * 1.5f;
+            for(auto& e : enemies) {
+                if(e.active && checkCollision(hitReachX, hitReachZ, 1.0f, e.x, e.z, 0.5f)) {
+                    e.active = false; // Defeat enemy
+                }
+            }
+        }
+
+        // Enemy AI (Move towards player slowly)
+        for(auto& e : enemies) {
+            if(e.active) {
+                float dx = pX - e.x; float dz = pZ - e.z;
+                float dist = sqrt(dx*dx + dz*dz);
+                if(dist > 0.5f) { e.x += (dx/dist)*0.03f; e.z += (dz/dist)*0.03f; }
+                else if(!isBlocking) { playerHealth -= 1; } // Take damage if not blocking
+            }
+        }
 
         glClearColor(0.4f, 0.7f, 1.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         GLint lProj = glGetUniformLocation(prog, "uProj"), lView = glGetUniformLocation(prog, "uView"), lModl = glGetUniformLocation(prog, "uModel");
@@ -101,10 +147,11 @@ extern "C" {
         Mat4 viewMatrix = Mat4::translate(-pX, -3.5f, -pZ - 9.0f).multiply(Mat4::rotateX(0.3f));
         glUniformMatrix4fv(lView, 1, GL_FALSE, viewMatrix.m);
 
+        // Ground
         glUniformMatrix4fv(lModl, 1, GL_FALSE, Mat4::identity().m);
         glBindVertexArray(vaoGround); glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // Infinite World Generation
+        // Infinite World Generation (Trees)
         glBindVertexArray(vaoTree);
         for(int i=-3; i<=3; i++) {
             for(int j=-3; j<=3; j++) {
@@ -116,7 +163,18 @@ extern "C" {
             }
         }
 
-        // Action & Animation Sequences
+        // Render Enemies (Re-using the body mesh tinted red via uniform, omitted tint for simplicity, just rendering body)
+        glBindVertexArray(vaoBody);
+        for(const auto& e : enemies) {
+            if(e.active) {
+                Mat4 eMat = Mat4::translate(e.x, 0, e.z);
+                glUniformMatrix4fv(lModl, 1, GL_FALSE, eMat.m);
+                glDrawArrays(GL_TRIANGLES, 0, N_BODY);
+                glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES, 0, N_HEAD); glBindVertexArray(vaoBody); // Draw head too
+            }
+        }
+
+        // Action & Animation Sequences for Player
         float bob = sin(walkTimer) * 0.08f;
         Mat4 baseTrans = Mat4::translate(pX, bob, pZ).multiply(Mat4::rotateY(pFace));
 
