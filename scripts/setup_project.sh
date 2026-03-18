@@ -1,4 +1,5 @@
 #!/bin/bash
+echo "Scaffolding Android Project..."
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
@@ -6,7 +7,7 @@ mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
 mkdir -p runtime/
 
-# 1. settings.gradle
+# 1. Gradle Settings
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
 dependencyResolutionManagement { 
@@ -17,7 +18,6 @@ rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
-# 2. build.gradle (Root)
 cat << 'EOF' > build.gradle
 buildscript {
     repositories { google(); mavenCentral() }
@@ -25,7 +25,6 @@ buildscript {
 }
 EOF
 
-# 3. app/build.gradle
 cat << 'EOF' > app/build.gradle
 apply plugin: 'com.android.application'
 android {
@@ -41,7 +40,7 @@ android {
 }
 EOF
 
-# 4. CRITICAL FIX: CMakeLists.txt (Linking GLESv3)
+# 2. CMake Build Instructions
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
 project("procedural_engine")
@@ -51,7 +50,7 @@ find_library(gles3-lib GLESv3)
 target_link_libraries(procedural_engine ${log-lib} ${gles3-lib})
 EOF
 
-# 5. MainActivity.java (With Action Hooks)
+# 3. Android Java Lifecycle & Touch Handlers
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
@@ -65,6 +64,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
     private float tX, tY;
     static { System.loadLibrary("procedural_engine"); }
+    
+    // Native hooks to C++ Engine
     private native void onCreated();
     private native void onChanged(int w, int h);
     private native void onDraw(float x, float y);
@@ -78,15 +79,29 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         glView.setEGLContextClientVersion(3);
         glView.setRenderer(this);
 
+        // Movement Overlay
         findViewById(R.id.thumbstick).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_MOVE) {
                 tX = (e.getX() / v.getWidth()) * 2 - 1;
                 tY = (e.getY() / v.getHeight()) * 2 - 1;
-            } else { tX = 0; tY = 0; }
+            } else if (e.getAction() == MotionEvent.ACTION_UP) { 
+                tX = 0; tY = 0; 
+            }
             return true;
         });
 
-        findViewById(R.id.btn_sword).setOnClickListener(v -> triggerAction(1));
+        // 'A' Button - Attack
+        findViewById(R.id.btn_sword).setOnTouchListener((v, e) -> {
+            if(e.getAction() == MotionEvent.ACTION_DOWN) triggerAction(1);
+            return true;
+        });
+        
+        // 'B' Button - Defend (Hold to block)
+        findViewById(R.id.btn_shield).setOnTouchListener((v, e) -> {
+            if(e.getAction() == MotionEvent.ACTION_DOWN) triggerAction(2);
+            else if(e.getAction() == MotionEvent.ACTION_UP) triggerAction(3); 
+            return true;
+        });
     }
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig c) { onCreated(); }
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { onChanged(w, h); }
@@ -94,22 +109,33 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
 }
 EOF
 
-# 6. activity_main.xml
+# 4. Android XML UI Layout (The Overlay)
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent">
+    
     <android.opengl.GLSurfaceView android:id="@+id/game_surface"
         android:layout_width="match_parent" android:layout_height="match_parent" />
-    <View android:id="@+id/thumbstick" android:layout_width="120dp" android:layout_height="120dp"
+        
+    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp"
         android:layout_alignParentBottom="true" android:layout_margin="30dp"
         android:background="@drawable/thumbstick_base" />
-    <Button android:id="@+id/btn_sword" android:layout_width="80dp" android:layout_height="80dp"
+        
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:layout_alignParentBottom="true" android:layout_alignParentRight="true"
-        android:layout_margin="30dp" android:text="A" android:background="@drawable/action_btn" />
+        android:layout_margin="30dp" android:orientation="horizontal" android:gravity="bottom">
+        
+        <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp"
+            android:layout_marginRight="20dp" android:text="B" android:textColor="#FFF" 
+            android:textSize="24sp" android:background="@drawable/action_btn" />
+            
+        <Button android:id="@+id/btn_sword" android:layout_width="100dp" android:layout_height="100dp"
+            android:text="A" android:textColor="#FFF" android:textSize="28sp" 
+            android:background="@drawable/action_btn" />
+    </LinearLayout>
 </RelativeLayout>
 EOF
 
-# 7. AndroidManifest.xml
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -119,3 +145,4 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
     </application>
 </manifest>
 EOF
+echo "Scaffolding Complete."
