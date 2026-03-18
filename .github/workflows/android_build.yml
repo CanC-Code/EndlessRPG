@@ -1,0 +1,43 @@
+name: Build Procedural 3D Game
+on:
+  workflow_dispatch: # Manual trigger only
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK & CMake
+        run: |
+          sdkmanager "ndk;25.2.9519653" "cmake;3.22.1"
+
+      - name: Run Project Scaffolder
+        run: bash scripts/setup_project.sh
+
+      - name: Execute Runtime Content Generation
+        run: |
+          chmod +x runtime/generate_game.sh
+          ./runtime/generate_game.sh
+
+      - name: Setup Gradle Wrapper
+        run: gradle wrapper
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProceduralGame-Debug
+          path: app/build/outputs/apk/debug/*.apk
