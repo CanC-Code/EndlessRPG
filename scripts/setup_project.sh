@@ -1,16 +1,21 @@
 #!/bin/bash
-echo "Scaffolding Android Project with Orbital Camera Controls..."
+echo "Scaffolding Complete Android Project Structure..."
 
+# 1. Create Directory Tree
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
+mkdir -p runtime
 
-# Gradle Files
+# 2. Root Gradle Configuration
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+dependencyResolutionManagement { 
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories { google(); mavenCentral() } 
+}
 rootProject.name = "EndlessRPG"
 include ':app'
 EOF
@@ -19,6 +24,7 @@ cat << 'EOF' > build.gradle
 plugins { id 'com.android.application' version '8.2.0' apply false }
 EOF
 
+# 3. App Module Configuration
 cat << 'EOF' > app/build.gradle
 plugins { id 'com.android.application' }
 android {
@@ -34,7 +40,7 @@ android {
 }
 EOF
 
-# AndroidManifest
+# 4. Android Manifest
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -45,7 +51,7 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# UI Layout and Resources
+# 5. UI Resources (Drawables & Layout)
 cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/></shape>
 EOF
@@ -63,7 +69,7 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 </RelativeLayout>
 EOF
 
-# Java Layer (Camera Input Handling)
+# 6. Java Activity (Orbital Camera Input)
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
@@ -77,7 +83,7 @@ import javax.microedition.khronos.opengles.GL10;
 public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
     private float tX = 0f, tY = 0f;
-    private float camYaw = 0f, camPitch = 0.5f, camZoom = 12.0f;
+    private float camYaw = 0.7f, camPitch = 0.5f, camZoom = 12.0f;
     private float lastTouchX, lastTouchY;
     private ScaleGestureDetector scaleDetector;
 
@@ -92,46 +98,34 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         glView = findViewById(R.id.game_surface);
-        
         glView.setEGLContextClientVersion(3);
         glView.setEGLConfigChooser(8, 8, 8, 8, 16, 0); 
         glView.setRenderer(this);
 
-        // Pinch to Zoom Listener
         scaleDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            @Override
-            public boolean onScale(ScaleGestureDetector detector) {
-                camZoom /= detector.getScaleFactor();
-                if (camZoom < 4.0f) camZoom = 4.0f;
-                if (camZoom > 30.0f) camZoom = 30.0f;
+            @Override public boolean onScale(ScaleGestureDetector d) {
+                camZoom /= d.getScaleFactor();
+                camZoom = Math.max(4.0f, Math.min(30.0f, camZoom));
                 return true;
             }
         });
 
-        // Swipe to Rotate (Right side of screen)
         glView.setOnTouchListener((v, e) -> {
             scaleDetector.onTouchEvent(e);
-            if (!scaleDetector.isInProgress() && e.getPointerCount() == 1) {
-                if (e.getX() > v.getWidth() / 2.0f) {
-                    if (e.getAction() == MotionEvent.ACTION_DOWN) {
-                        lastTouchX = e.getX(); lastTouchY = e.getY();
-                    } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
-                        camYaw += (e.getX() - lastTouchX) * 0.01f;
-                        camPitch += (e.getY() - lastTouchY) * 0.01f;
-                        if (camPitch < 0.1f) camPitch = 0.1f; // Prevent looking under the map
-                        if (camPitch > 1.5f) camPitch = 1.5f; // Prevent flipping over
-                        lastTouchX = e.getX(); lastTouchY = e.getY();
-                    }
+            if (!scaleDetector.isInProgress() && e.getPointerCount() == 1 && e.getX() > v.getWidth()/2f) {
+                if (e.getAction() == MotionEvent.ACTION_DOWN) { lastTouchX = e.getX(); lastTouchY = e.getY(); }
+                else if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                    camYaw += (e.getX() - lastTouchX) * 0.01f;
+                    camPitch = Math.max(0.1f, Math.min(1.5f, camPitch + (e.getY() - lastTouchY) * 0.01f));
+                    lastTouchX = e.getX(); lastTouchY = e.getY();
                 }
             }
             return true;
         });
 
-        // Left Screen Thumbstick
         findViewById(R.id.thumbstick).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_MOVE) {
-                tX = (e.getX() / v.getWidth()) * 2 - 1;
-                tY = (e.getY() / v.getHeight()) * 2 - 1;
+                tX = (e.getX() / v.getWidth()) * 2 - 1; tY = (e.getY() / v.getHeight()) * 2 - 1;
             } else { tX = 0f; tY = 0f; }
             return true;
         });
