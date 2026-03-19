@@ -1,10 +1,10 @@
 #!/bin/bash
-echo "Building Voxel Assets & Gameplay Engine..."
+echo "Executing Asset Generation & Native Engine Injection..."
 
-# 1. Run Procedural Modeler
+# 1. Run Blender Pipeline
 blender --background --python runtime/build_models.py
 
-# 2. C++ CMake
+# 2. CMakeLists
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
 project("procedural_engine")
@@ -12,13 +12,13 @@ add_library(procedural_engine SHARED native-lib.cpp)
 target_link_libraries(procedural_engine log GLESv3)
 EOF
 
-# 3. C++ Gameplay Engine
+# 3. Native C++ Engine
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <vector>
-#include "GeneratedModels.h"
 #include <cmath>
+#include "GeneratedModels.h"
 
 struct Mat4 {
     float m[16] = {0};
@@ -36,14 +36,11 @@ struct Mat4 {
     static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
 };
 
-GLuint prog, vaoHero, vaoSword, vaoShield, vaoTree, vaoEnemy, vaoGround;
+GLuint prog, vaoHero, vaoSword, vaoShield, vaoTree, vaoGround;
 float px=0, pz=0, pf=0, wt=0, st=0;
-int playerHP = 100;
-volatile bool isSlashing = false, isBlocking = false;
+int hp = 100;
+volatile bool slash=false, block=false;
 Mat4 proj;
-
-struct Enemy { float x, z; int hp; };
-std::vector<Enemy> enemies;
 
 GLuint createVAO(const float* d, int n) {
     GLuint vao, vbo; glGenVertexArrays(1,&vao); glGenBuffers(1,&vbo);
@@ -65,10 +62,8 @@ extern "C" {
         glEnable(GL_DEPTH_TEST);
         vaoHero=createVAO(M_HERO, N_HERO); vaoSword=createVAO(M_SWORD, N_SWORD);
         vaoShield=createVAO(M_SHIELD, N_SHIELD); vaoTree=createVAO(M_TREE, N_TREE);
-        vaoEnemy=createVAO(M_ENEMY, N_ENEMY);
         float g[]={-100,0,-100,0.3,0.5,0.2, 100,0,-100,0.3,0.5,0.2, -100,0,100,0.3,0.5,0.2, 100,0,-100,0.3,0.5,0.2, 100,0,100,0.3,0.5,0.2, -100,0,100,0.3,0.5,0.2};
         vaoGround=createVAO(g,6);
-        for(int i=0; i<5; i++) enemies.push_back({(float)(rand()%20-10), (float)(rand()%20-10), 3});
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
@@ -80,9 +75,9 @@ extern "C" {
             float s=sin(yaw), c=cos(yaw), dx=ix*c-(-iy)*s, dz=ix*s+(-iy)*c;
             px+=dx*0.12f; pz-=dz*0.12f; pf=atan2(-dx,dz); wt+=0.2f;
         }
-        if(isSlashing) { st+=0.2f; if(st>3.14f){ isSlashing=false; st=0; } }
+        if(slash) { st+=0.2f; if(st>3.14f){ slash=false; st=0; } }
 
-        glClearColor(0.4f,0.7f,1.0f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glClearColor(0.2f,0.6f,1.0f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
         GLint lp=glGetUniformLocation(prog,"pr"), lv=glGetUniformLocation(prog,"v"), lm=glGetUniformLocation(prog,"m");
         glUniformMatrix4fv(lp,1,0,proj.m);
         Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1,-pz));
@@ -93,30 +88,20 @@ extern "C" {
         glBindVertexArray(vaoTree);
         for(int i=-2; i<=2; i++) for(int j=-2; j<=2; j++){
             float wx=floor(px/8.f)*8.f+i*8.f, wz=floor(pz/8.f)*8.f+j*8.f;
-            if(fmod(wx*1.2f+wz*0.7f, 6.f)>4.5f) {
+            if(fmod(wx*1.3f+wz*0.9f, 6.f)>4.5f) {
                 Mat4 m=Mat4::trans(wx,0,wz); glUniformMatrix4fv(lm,1,0,m.m); glDrawArrays(GL_TRIANGLES,0,N_TREE);
-            }
-        }
-
-        for(auto& e : enemies) {
-            if(e.hp > 0) {
-                float dx=px-e.x, dz=pz-e.z, d=sqrt(dx*dx+dz*dz);
-                if(d>1.0f) { e.x+=dx/d*0.02f; e.z+=dz/d*0.02f; }
-                else if(!isBlocking) playerHP--;
-                Mat4 m=Mat4::trans(e.x,0,e.z).mul(Mat4::rotY(atan2(dx,dz)));
-                glUniformMatrix4fv(lm,1,0,m.m); glBindVertexArray(vaoEnemy); glDrawArrays(GL_TRIANGLES,0,N_ENEMY);
             }
         }
 
         Mat4 h=Mat4::trans(px,sin(wt)*0.08f,pz).mul(Mat4::rotY(pf));
         glUniformMatrix4fv(lm,1,0,h.m); glBindVertexArray(vaoHero); glDrawArrays(GL_TRIANGLES,0,N_HERO);
-        Mat4 s=h; if(isSlashing) s=h.mul(Mat4::trans(0,0.5,0)).mul(Mat4::rotX(-sin(st)*2.5)).mul(Mat4::trans(0,-0.5,0));
+        Mat4 s=h; if(slash) s=h.mul(Mat4::trans(0,0.5,0)).mul(Mat4::rotX(-sin(st)*2.5)).mul(Mat4::trans(0,-0.5,0));
         glUniformMatrix4fv(lm,1,0,s.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
-        Mat4 b=h; if(isBlocking) b=h.mul(Mat4::trans(0,0.2,0.4));
+        Mat4 b=h; if(block) b=h.mul(Mat4::trans(0,0.2,0.4));
         glUniformMatrix4fv(lm,1,0,b.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
     }
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1) isSlashing=true; else if(id==2) isBlocking=true; else isBlocking=false;
+        if(id==1) slash=true; else if(id==2) block=true; else block=false;
     }
 }
 EOF
