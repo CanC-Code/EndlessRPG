@@ -1,17 +1,70 @@
 #!/bin/bash
-echo "Dynamically Generating C++ Engine with Combat Logic..."
+echo "Dynamically Generating Assets and Advanced Engine..."
 
-# 1. CMakeLists
-cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
-cmake_minimum_required(VERSION 3.22.1)
-project("procedural_engine")
-add_library(procedural_engine SHARED native-lib.cpp)
-find_library(log-lib log)
-find_library(gles3-lib GLESv3)
-target_link_libraries(procedural_engine ${log-lib} ${gles3-lib})
+# 1. Blender Modeler (Added Rocks and Bushes for World Detail)
+cat << 'EOF' > runtime/build_models.py
+import bpy
+from math import radians
+
+def clean():
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete()
+
+def export_model(name, r, g, b, build_func):
+    clean()
+    build_func()
+    obj = bpy.context.object
+    bpy.ops.object.modifier_add(type='TRIANGULATE')
+    bpy.ops.object.modifier_apply(modifier=obj.modifiers[-1].name)
+    
+    verts = []
+    mesh = obj.data
+    mesh.calc_loop_triangles()
+    
+    for tri in mesh.loop_triangles:
+        for loop_idx in tri.loops:
+            v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
+            verts.extend([v.co.x, v.co.z, -v.co.y])
+            lum = max(0.2, 0.6 + (v.normal.z * 0.4) + (v.normal.x * 0.1))
+            verts.extend([r * lum, g * lum, b * lum])
+    return verts
+
+v_body = export_model("BODY", 0.1, 0.3, 0.8, lambda: bpy.ops.mesh.primitive_cylinder_add(radius=0.3, depth=0.8, location=(0,0,0.8)))
+v_head = export_model("HEAD", 0.9, 0.7, 0.6, lambda: bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.25, location=(0,0,1.5)))
+v_cape = export_model("CAPE", 0.8, 0.1, 0.1, lambda: (
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0,-0.2,0.9)),
+    setattr(bpy.context.object, 'scale', (0.3, 0.05, 0.6)),
+    setattr(bpy.context.object, 'rotation_euler', (radians(-15),0,0))
+))
+v_sword = export_model("SWORD", 0.7, 0.7, 0.75, lambda: (
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=1.2, location=(0.4, 0.4, 1.0)),
+    setattr(bpy.context.object, 'rotation_euler', (radians(90),0,0))
+))
+v_shield = export_model("SHIELD", 0.4, 0.2, 0.1, lambda: (
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.35, depth=0.1, location=(-0.4, 0.3, 0.9)),
+    setattr(bpy.context.object, 'rotation_euler', (radians(90),radians(90),0))
+))
+v_tree = export_model("TREE", 0.2, 0.6, 0.2, lambda: (
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.15, depth=1.0, location=(0,0,0.5)),
+    bpy.ops.mesh.primitive_cone_add(radius1=0.8, depth=2.0, location=(0,0,2.0)),
+    bpy.ops.object.select_all(action='SELECT'), bpy.ops.object.join()
+))
+v_rock = export_model("ROCK", 0.5, 0.5, 0.5, lambda: (
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.4, location=(0,0,0.2)),
+    setattr(bpy.context.object, 'scale', (1.0, 0.8, 0.5))
+))
+v_bush = export_model("BUSH", 0.1, 0.4, 0.1, lambda: bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.5, location=(0,0,0.3)))
+
+with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
+    f.write("#pragma once\n")
+    for name, data in [("BODY", v_body), ("HEAD", v_head), ("CAPE", v_cape), ("SWORD", v_sword), ("SHIELD", v_shield), ("TREE", v_tree), ("ROCK", v_rock), ("BUSH", v_bush)]:
+        f.write(f"const float M_{name}[] = {{ {', '.join(map(str, data))} }};\n")
+        f.write(f"const int N_{name} = {len(data)//6};\n")
 EOF
 
-# 2. Math & Collision Library
+blender --background --python runtime/build_models.py
+
+# 2. C++ Math and Engine Library
 cat << 'EOF' > app/src/main/cpp/MathUtils.h
 #pragma once
 #include <cmath>
@@ -42,39 +95,21 @@ struct Mat4 {
         res.m[5]=c; res.m[6]=s; res.m[9]=-s; res.m[10]=c; return res;
     }
 };
-
-// Simple Circle Collision
-bool checkCollision(float x1, float z1, float r1, float x2, float z2, float r2) {
-    float dx = x1 - x2;
-    float dz = z1 - z2;
-    float distance = sqrt(dx * dx + dz * dz);
-    return distance < (r1 + r2);
-}
 EOF
 
-# 3. Game Engine Core (Now with Enemies and Hit Detection)
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
-#include <vector>
-#include <cstdlib>
 #include "GeneratedModels.h"
 #include "MathUtils.h"
 
 const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c;\nuniform mat4 uProj, uView, uModel;\nout vec3 vCol; void main(){ gl_Position = uProj * uView * uModel * vec4(p,1.0); vCol = c; }";
 const char* fS = "#version 300 es\nprecision mediump float; in vec3 vCol; out vec4 o; void main(){ o = vec4(vCol, 1.0); }";
 
-GLuint prog, vaoBody, vaoHead, vaoCape, vaoSword, vaoShield, vaoTree, vaoGround;
+GLuint prog, vaoBody, vaoHead, vaoCape, vaoSword, vaoShield, vaoTree, vaoRock, vaoBush, vaoGround;
 float pX = 0, pZ = 0, pFace = 0, walkTimer = 0, slashTimer = 0;
 volatile bool isSlashing = false, isBlocking = false;
-int playerHealth = 100;
 Mat4 projMatrix;
-
-struct Enemy {
-    float x, z;
-    bool active;
-};
-std::vector<Enemy> enemies;
 
 GLuint createVAO(const float* data, int numVerts) {
     GLuint vao, vbo; glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
@@ -95,86 +130,66 @@ extern "C" {
         vaoBody = createVAO(M_BODY, N_BODY); vaoHead = createVAO(M_HEAD, N_HEAD);
         vaoCape = createVAO(M_CAPE, N_CAPE); vaoSword = createVAO(M_SWORD, N_SWORD);
         vaoShield = createVAO(M_SHIELD, N_SHIELD); vaoTree = createVAO(M_TREE, N_TREE);
+        vaoRock = createVAO(M_ROCK, N_ROCK); vaoBush = createVAO(M_BUSH, N_BUSH);
 
         float g[] = { -100,0,-100, 0.2f,0.5f,0.2f, 100,0,-100, 0.2f,0.5f,0.2f, -100,0,100, 0.2f,0.5f,0.2f,
                        100,0,-100, 0.2f,0.5f,0.2f, 100,0,100, 0.2f,0.5f,0.2f, -100,0,100, 0.2f,0.5f,0.2f };
         vaoGround = createVAO(g, 6);
-
-        // Spawn initial enemies
-        for(int i=0; i<5; i++) {
-            enemies.push_back({(float)(rand()%20 - 10), (float)(rand()%20 - 10), true});
-        }
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
         glViewport(0, 0, w, h); projMatrix = Mat4::perspective(3.14159f / 3.0f, (float)w / h, 0.1f, 100.0f);
     }
     
-    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy) {
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat camYaw, jfloat camPitch, jfloat camZoom) {
         bool moving = (fabs(ix) > 0.05f || fabs(iy) > 0.05f);
-        if(!isBlocking && moving) { pX += ix * 0.15f; pZ -= iy * 0.15f; walkTimer += 0.2f; pFace = atan2(-ix, -iy); } 
-        else if (!moving) { walkTimer = 0; }
         
-        // Combat Logic
-        if(isSlashing) { 
-            slashTimer += 0.3f; 
-            if(slashTimer > 3.14f) { isSlashing = false; slashTimer = 0; }
+        // CAMERA-RELATIVE MOVEMENT MATH
+        if(!isBlocking && moving) { 
+            float s = sin(camYaw), c = cos(camYaw);
+            // Rotate the raw thumbstick input vector against the camera's current yaw
+            float dx = ix * c - (-iy) * s; 
+            float dz = ix * s + (-iy) * c;
             
-            // Hit Detection - Check if enemies are hit by the slash
-            float hitReachX = pX + sin(pFace) * 1.5f;
-            float hitReachZ = pZ - cos(pFace) * 1.5f;
-            for(auto& e : enemies) {
-                if(e.active && checkCollision(hitReachX, hitReachZ, 1.0f, e.x, e.z, 0.5f)) {
-                    e.active = false; // Defeat enemy
-                }
-            }
-        }
-
-        // Enemy AI (Move towards player slowly)
-        for(auto& e : enemies) {
-            if(e.active) {
-                float dx = pX - e.x; float dz = pZ - e.z;
-                float dist = sqrt(dx*dx + dz*dz);
-                if(dist > 0.5f) { e.x += (dx/dist)*0.03f; e.z += (dz/dist)*0.03f; }
-                else if(!isBlocking) { playerHealth -= 1; } // Take damage if not blocking
-            }
-        }
+            pX += dx * 0.15f; 
+            pZ -= dz * 0.15f; 
+            walkTimer += 0.2f; 
+            pFace = atan2(-dx, dz); // Character points toward movement
+        } else if (!moving) { walkTimer = 0; }
+        
+        if(isSlashing) { slashTimer += 0.3f; if(slashTimer > 3.14f) { isSlashing = false; slashTimer = 0; } }
 
         glClearColor(0.4f, 0.7f, 1.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         GLint lProj = glGetUniformLocation(prog, "uProj"), lView = glGetUniformLocation(prog, "uView"), lModl = glGetUniformLocation(prog, "uModel");
         glUniformMatrix4fv(lProj, 1, GL_FALSE, projMatrix.m);
 
-        Mat4 viewMatrix = Mat4::translate(-pX, -3.5f, -pZ - 9.0f).multiply(Mat4::rotateX(0.3f));
+        // ORBITAL CAMERA MATH
+        // We push the camera back by the zoom, pitch it down, yaw it around the origin, then translate the origin to the player
+        Mat4 viewMatrix = Mat4::translate(0, 0, -camZoom)
+            .multiply(Mat4::rotateX(-camPitch))
+            .multiply(Mat4::rotateY(-camYaw))
+            .multiply(Mat4::translate(-pX, -1.0f, -pZ));
+            
         glUniformMatrix4fv(lView, 1, GL_FALSE, viewMatrix.m);
 
-        // Ground
         glUniformMatrix4fv(lModl, 1, GL_FALSE, Mat4::identity().m);
         glBindVertexArray(vaoGround); glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // Infinite World Generation (Trees)
-        glBindVertexArray(vaoTree);
-        for(int i=-3; i<=3; i++) {
-            for(int j=-3; j<=3; j++) {
-                float wx = floor(pX/8.0f)*8.0f + i*8.0f, wz = floor(pZ/8.0f)*8.0f + j*8.0f;
-                if(fmod(wx*1.2f + wz*0.7f, 6.0f) > 4.5f) {
-                    Mat4 tMat = Mat4::translate(wx, 0, wz);
-                    glUniformMatrix4fv(lModl, 1, GL_FALSE, tMat.m); glDrawArrays(GL_TRIANGLES, 0, N_TREE);
-                }
+        // DETAILED WORLD GENERATION (Trees, Rocks, Bushes)
+        for(int i=-4; i<=4; i++) {
+            for(int j=-4; j<=4; j++) {
+                float wx = floor(pX/6.0f)*6.0f + i*6.0f, wz = floor(pZ/6.0f)*6.0f + j*6.0f;
+                float seed = fmod(wx*1.2f + wz*0.7f, 6.0f);
+                Mat4 tMat = Mat4::translate(wx, 0, wz);
+                glUniformMatrix4fv(lModl, 1, GL_FALSE, tMat.m); 
+                
+                if(seed > 5.0f) { glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES, 0, N_TREE); }
+                else if (seed > 4.5f) { glBindVertexArray(vaoRock); glDrawArrays(GL_TRIANGLES, 0, N_ROCK); }
+                else if (seed > 3.8f) { glBindVertexArray(vaoBush); glDrawArrays(GL_TRIANGLES, 0, N_BUSH); }
             }
         }
 
-        // Render Enemies (Re-using the body mesh tinted red via uniform, omitted tint for simplicity, just rendering body)
-        glBindVertexArray(vaoBody);
-        for(const auto& e : enemies) {
-            if(e.active) {
-                Mat4 eMat = Mat4::translate(e.x, 0, e.z);
-                glUniformMatrix4fv(lModl, 1, GL_FALSE, eMat.m);
-                glDrawArrays(GL_TRIANGLES, 0, N_BODY);
-                glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES, 0, N_HEAD); glBindVertexArray(vaoBody); // Draw head too
-            }
-        }
-
-        // Action & Animation Sequences for Player
+        // PLAYER ANIMATION
         float bob = sin(walkTimer) * 0.08f;
         Mat4 baseTrans = Mat4::translate(pX, bob, pZ).multiply(Mat4::rotateY(pFace));
 
@@ -204,7 +219,3 @@ extern "C" {
     }
 }
 EOF
-
-# Execute the Blender modeler script directly from the engine generator
-echo "Running Headless Blender Pipeline..."
-blender --background --python runtime/build_models.py
