@@ -1,46 +1,24 @@
 #!/bin/bash
-echo "Scaffolding Voxel RPG Project with Fixed Gradle Repositories..."
+echo "Scaffolding Modular Voxel RPG Project..."
 
-# Create Directory Tree
 mkdir -p app/src/main/java/com/game/procedural
-mkdir -p app/src/main/cpp
+mkdir -p app/src/main/cpp/models
 mkdir -p app/src/main/res/layout
-mkdir -p app/src/main/res/values
-mkdir -p app/src/main/res/drawable
-mkdir -p runtime
+mkdir -p runtime/python
 
-# 1. Root settings.gradle (CRITICAL FIX FOR PLUGIN ERROR)
 cat << 'EOF' > settings.gradle
-pluginManagement {
-    repositories {
-        google()
-        mavenCentral()
-        gradlePluginPortal()
-    }
-}
-dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
+pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
 rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
-# 2. Root build.gradle
 cat << 'EOF' > build.gradle
-plugins {
-    id 'com.android.application' version '8.2.2' apply false
-}
+plugins { id 'com.android.application' version '8.2.2' apply false }
 EOF
 
-# 3. App build.gradle
 cat << 'EOF' > app/build.gradle
-plugins {
-    id 'com.android.application'
-}
+plugins { id 'com.android.application' }
 android {
     namespace 'com.game.procedural'
     compileSdk 34
@@ -54,7 +32,27 @@ android {
 }
 EOF
 
-# 4. Java Activity (Handling Scale/Orbital Controls)
+cat << 'EOF' > app/src/main/AndroidManifest.xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <activity android:name="com.game.procedural.MainActivity" android:exported="true" android:screenOrientation="landscape">
+            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOF
+
+cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
+    <android.opengl.GLSurfaceView android:id="@+id/game_surface" android:layout_width="match_parent" android:layout_height="match_parent" />
+    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp" android:layout_alignParentBottom="true" android:layout_margin="30dp" />
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp">
+        <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp" android:text="🛡️" />
+        <Button android:id="@+id/btn_sword" android:layout_width="80dp" android:layout_height="80dp" android:text="⚔️" />
+    </LinearLayout>
+</RelativeLayout>
+EOF
+
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
@@ -68,7 +66,7 @@ import javax.microedition.khronos.opengles.GL10;
 public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
     private float tX = 0f, tY = 0f;
-    private float camYaw = 0.7f, camPitch = 0.5f, camZoom = 15.0f;
+    private float camYaw = 0.7f, camPitch = 0.6f, camZoom = 15.0f;
     private float lastX, lastY;
     private ScaleGestureDetector zoomer;
 
@@ -84,7 +82,7 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         setContentView(R.layout.activity_main);
         glView = findViewById(R.id.game_surface);
         glView.setEGLContextClientVersion(3);
-        glView.setEGLConfigChooser(8,8,8,8,16,0); // 16-bit Depth Buffer
+        glView.setEGLConfigChooser(8,8,8,8,16,0);
         glView.setRenderer(this);
 
         zoomer = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -100,7 +98,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
                 if (e.getAction() == MotionEvent.ACTION_DOWN) { lastX = e.getX(); lastY = e.getY(); }
                 else if (e.getAction() == MotionEvent.ACTION_MOVE) {
                     camYaw += (e.getX() - lastX) * 0.01f;
-                    camPitch = Math.max(0.1f, Math.min(1.4f, camPitch + (e.getY() - lastY) * 0.01f));
+                    // CRITICAL FIX: Clamp pitch at 0.3f to prevent camera from going under the floor
+                    camPitch = Math.max(0.3f, Math.min(1.4f, camPitch + (e.getY() - lastY) * 0.01f));
                     lastX = e.getX(); lastY = e.getY();
                 }
             }
@@ -125,27 +124,4 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { onChanged(w, h); }
     @Override public void onDrawFrame(GL10 gl) { onDraw(tX, tY, camYaw, camPitch, camZoom); }
 }
-EOF
-
-# 5. Build Artifact (Manifest)
-cat << 'EOF' > app/src/main/AndroidManifest.xml
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
-        <activity android:name="com.game.procedural.MainActivity" android:exported="true" android:screenOrientation="landscape">
-            <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-        </activity>
-    </application>
-</manifest>
-EOF
-
-# 6. UI Resources
-cat << 'EOF' > app/src/main/res/layout/activity_main.xml
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
-    <android.opengl.GLSurfaceView android:id="@+id/game_surface" android:layout_width="match_parent" android:layout_height="match_parent" />
-    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp" android:layout_alignParentBottom="true" android:layout_margin="30dp" />
-    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp">
-        <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp" android:text="🛡️" />
-        <Button android:id="@+id/btn_sword" android:layout_width="80dp" android:layout_height="80dp" android:text="⚔️" />
-    </LinearLayout>
-</RelativeLayout>
 EOF
