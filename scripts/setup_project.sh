@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Scaffolding Dynamic Android Project Structure..."
+echo "Scaffolding Android Project with Orbital Camera Controls..."
 
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
@@ -7,13 +7,10 @@ mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
 
-# Root Configs
+# Gradle Files
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { 
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() } 
-}
+dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
 rootProject.name = "EndlessRPG"
 include ':app'
 EOF
@@ -37,7 +34,7 @@ android {
 }
 EOF
 
-# Manifest
+# AndroidManifest
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -48,7 +45,7 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# UI Resources
+# UI Layout and Resources
 cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/></shape>
 EOF
@@ -66,23 +63,28 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 </RelativeLayout>
 EOF
 
-# Java Logic (Hardware Depth Buffer Allocation)
+# Java Layer (Camera Input Handling)
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
     private float tX = 0f, tY = 0f;
+    private float camYaw = 0f, camPitch = 0.5f, camZoom = 12.0f;
+    private float lastTouchX, lastTouchY;
+    private ScaleGestureDetector scaleDetector;
+
     static { System.loadLibrary("procedural_engine"); }
     private native void onCreated();
     private native void onChanged(int w, int h);
-    private native void onDraw(float x, float y);
+    private native void onDraw(float x, float y, float yaw, float pitch, float zoom);
     private native void triggerAction(int id);
 
     @Override
@@ -95,6 +97,37 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         glView.setEGLConfigChooser(8, 8, 8, 8, 16, 0); 
         glView.setRenderer(this);
 
+        // Pinch to Zoom Listener
+        scaleDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector detector) {
+                camZoom /= detector.getScaleFactor();
+                if (camZoom < 4.0f) camZoom = 4.0f;
+                if (camZoom > 30.0f) camZoom = 30.0f;
+                return true;
+            }
+        });
+
+        // Swipe to Rotate (Right side of screen)
+        glView.setOnTouchListener((v, e) -> {
+            scaleDetector.onTouchEvent(e);
+            if (!scaleDetector.isInProgress() && e.getPointerCount() == 1) {
+                if (e.getX() > v.getWidth() / 2.0f) {
+                    if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                        lastTouchX = e.getX(); lastTouchY = e.getY();
+                    } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                        camYaw += (e.getX() - lastTouchX) * 0.01f;
+                        camPitch += (e.getY() - lastTouchY) * 0.01f;
+                        if (camPitch < 0.1f) camPitch = 0.1f; // Prevent looking under the map
+                        if (camPitch > 1.5f) camPitch = 1.5f; // Prevent flipping over
+                        lastTouchX = e.getX(); lastTouchY = e.getY();
+                    }
+                }
+            }
+            return true;
+        });
+
+        // Left Screen Thumbstick
         findViewById(R.id.thumbstick).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_MOVE) {
                 tX = (e.getX() / v.getWidth()) * 2 - 1;
@@ -102,6 +135,7 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
             } else { tX = 0f; tY = 0f; }
             return true;
         });
+        
         findViewById(R.id.btn_sword).setOnClickListener(v -> triggerAction(1));
         findViewById(R.id.btn_shield).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_DOWN) triggerAction(2);
@@ -111,6 +145,6 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     }
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig c) { onCreated(); }
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { onChanged(w, h); }
-    @Override public void onDrawFrame(GL10 gl) { onDraw(tX, tY); }
+    @Override public void onDrawFrame(GL10 gl) { onDraw(tX, tY, camYaw, camPitch, camZoom); }
 }
 EOF
