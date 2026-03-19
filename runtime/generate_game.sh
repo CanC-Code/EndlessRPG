@@ -1,221 +1,112 @@
 #!/bin/bash
-echo "Dynamically Generating Assets and Advanced Engine..."
+echo "Dynamically Generating Advanced Engine..."
 
-# 1. Blender Modeler (Added Rocks and Bushes for World Detail)
-cat << 'EOF' > runtime/build_models.py
-import bpy
-from math import radians
-
-def clean():
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.ops.object.delete()
-
-def export_model(name, r, g, b, build_func):
-    clean()
-    build_func()
-    obj = bpy.context.object
-    bpy.ops.object.modifier_add(type='TRIANGULATE')
-    bpy.ops.object.modifier_apply(modifier=obj.modifiers[-1].name)
-    
-    verts = []
-    mesh = obj.data
-    mesh.calc_loop_triangles()
-    
-    for tri in mesh.loop_triangles:
-        for loop_idx in tri.loops:
-            v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
-            verts.extend([v.co.x, v.co.z, -v.co.y])
-            lum = max(0.2, 0.6 + (v.normal.z * 0.4) + (v.normal.x * 0.1))
-            verts.extend([r * lum, g * lum, b * lum])
-    return verts
-
-v_body = export_model("BODY", 0.1, 0.3, 0.8, lambda: bpy.ops.mesh.primitive_cylinder_add(radius=0.3, depth=0.8, location=(0,0,0.8)))
-v_head = export_model("HEAD", 0.9, 0.7, 0.6, lambda: bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.25, location=(0,0,1.5)))
-v_cape = export_model("CAPE", 0.8, 0.1, 0.1, lambda: (
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0,-0.2,0.9)),
-    setattr(bpy.context.object, 'scale', (0.3, 0.05, 0.6)),
-    setattr(bpy.context.object, 'rotation_euler', (radians(-15),0,0))
-))
-v_sword = export_model("SWORD", 0.7, 0.7, 0.75, lambda: (
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=1.2, location=(0.4, 0.4, 1.0)),
-    setattr(bpy.context.object, 'rotation_euler', (radians(90),0,0))
-))
-v_shield = export_model("SHIELD", 0.4, 0.2, 0.1, lambda: (
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.35, depth=0.1, location=(-0.4, 0.3, 0.9)),
-    setattr(bpy.context.object, 'rotation_euler', (radians(90),radians(90),0))
-))
-v_tree = export_model("TREE", 0.2, 0.6, 0.2, lambda: (
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.15, depth=1.0, location=(0,0,0.5)),
-    bpy.ops.mesh.primitive_cone_add(radius1=0.8, depth=2.0, location=(0,0,2.0)),
-    bpy.ops.object.select_all(action='SELECT'), bpy.ops.object.join()
-))
-v_rock = export_model("ROCK", 0.5, 0.5, 0.5, lambda: (
-    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.4, location=(0,0,0.2)),
-    setattr(bpy.context.object, 'scale', (1.0, 0.8, 0.5))
-))
-v_bush = export_model("BUSH", 0.1, 0.4, 0.1, lambda: bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.5, location=(0,0,0.3)))
-
-with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
-    f.write("#pragma once\n")
-    for name, data in [("BODY", v_body), ("HEAD", v_head), ("CAPE", v_cape), ("SWORD", v_sword), ("SHIELD", v_shield), ("TREE", v_tree), ("ROCK", v_rock), ("BUSH", v_bush)]:
-        f.write(f"const float M_{name}[] = {{ {', '.join(map(str, data))} }};\n")
-        f.write(f"const int N_{name} = {len(data)//6};\n")
+# 1. CMakeLists (Fixes Undefined OpenGL Symbols)
+cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
+cmake_minimum_required(VERSION 3.22.1)
+project("procedural_engine")
+add_library(procedural_engine SHARED native-lib.cpp)
+target_link_libraries(procedural_engine log GLESv3)
 EOF
 
-blender --background --python runtime/build_models.py
-
-# 2. C++ Math and Engine Library
+# 2. Matrix Math Utility
 cat << 'EOF' > app/src/main/cpp/MathUtils.h
 #pragma once
 #include <cmath>
 struct Mat4 {
     float m[16] = {0};
-    static Mat4 identity() { Mat4 res; res.m[0]=1; res.m[5]=1; res.m[10]=1; res.m[15]=1; return res; }
-    static Mat4 perspective(float fov, float aspect, float nearZ, float farZ) {
-        Mat4 res; float f = 1.0f / tan(fov / 2.0f);
-        res.m[0] = f / aspect; res.m[5] = f;
-        res.m[10] = (farZ + nearZ) / (nearZ - farZ); res.m[11] = -1.0f;
-        res.m[14] = (2.0f * farZ * nearZ) / (nearZ - farZ); return res;
+    static Mat4 identity() { Mat4 r; r.m[0]=1; r.m[5]=1; r.m[10]=1; r.m[15]=1; return r; }
+    static Mat4 perspective(float fov, float asp, float n, float f) {
+        Mat4 r; float t = 1.0f / tan(fov/2.0f); r.m[0]=t/asp; r.m[5]=t; 
+        r.m[10]=(f+n)/(n-f); r.m[11]=-1; r.m[14]=(2*f*n)/(n-f); return r;
     }
-    Mat4 multiply(const Mat4& right) const {
-        Mat4 res;
-        for (int c=0; c<4; ++c) for (int r=0; r<4; ++r)
-            res.m[c*4+r] = m[0*4+r]*right.m[c*4+0] + m[1*4+r]*right.m[c*4+1] + m[2*4+r]*right.m[c*4+2] + m[3*4+r]*right.m[c*4+3];
-        return res;
+    Mat4 mul(const Mat4& b) const {
+        Mat4 r; for(int i=0; i<4; i++) for(int j=0; j<4; j++) for(int k=0; k<4; k++) 
+            r.m[i*4+j] += m[k*4+j]*b.m[i*4+k]; return r;
     }
-    static Mat4 translate(float x, float y, float z) {
-        Mat4 res = identity(); res.m[12]=x; res.m[13]=y; res.m[14]=z; return res;
-    }
-    static Mat4 rotateY(float angle) {
-        Mat4 res = identity(); float c=cos(angle), s=sin(angle);
-        res.m[0]=c; res.m[2]=-s; res.m[8]=s; res.m[10]=c; return res;
-    }
-    static Mat4 rotateX(float angle) {
-        Mat4 res = identity(); float c=cos(angle), s=sin(angle);
-        res.m[5]=c; res.m[6]=s; res.m[9]=-s; res.m[10]=c; return res;
-    }
+    static Mat4 trans(float x, float y, float z) { Mat4 r=identity(); r.m[12]=x; r.m[13]=y; r.m[14]=z; return r; }
+    static Mat4 rotY(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[2]=-sin(a); r.m[8]=sin(a); r.m[10]=cos(a); return r; }
+    static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
 };
 EOF
 
+# 3. Native JNI Engine (Orbital Camera & World Generation)
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
+#include <cmath>
 #include "GeneratedModels.h"
 #include "MathUtils.h"
 
-const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c;\nuniform mat4 uProj, uView, uModel;\nout vec3 vCol; void main(){ gl_Position = uProj * uView * uModel * vec4(p,1.0); vCol = c; }";
-const char* fS = "#version 300 es\nprecision mediump float; in vec3 vCol; out vec4 o; void main(){ o = vec4(vCol, 1.0); }";
+const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m, v, pr; out vec3 vc; void main(){ gl_Position=pr*v*m*vec4(p,1.0); vc=c; }";
+const char* fS = "#version 300 es\nprecision mediump float; in vec3 vc; out vec4 o; void main(){ o=vec4(vc,1.0); }";
 
-GLuint prog, vaoBody, vaoHead, vaoCape, vaoSword, vaoShield, vaoTree, vaoRock, vaoBush, vaoGround;
-float pX = 0, pZ = 0, pFace = 0, walkTimer = 0, slashTimer = 0;
-volatile bool isSlashing = false, isBlocking = false;
-Mat4 projMatrix;
+GLuint prog, vaoHero, vaoSword, vaoShield, vaoTree, vaoGround;
+float px=0, pz=0, pf=0, wt=0, st=0;
+volatile bool slash=false, block=false;
+Mat4 proj;
 
-GLuint createVAO(const float* data, int numVerts) {
-    GLuint vao, vbo; glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
-    glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, numVerts * 6 * sizeof(float), data, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0); glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float))); glEnableVertexAttribArray(1);
-    glBindVertexArray(0); return vao;
+GLuint createVAO(const float* d, int n) {
+    GLuint vao, vbo; glGenVertexArrays(1,&vao); glGenBuffers(1,&vbo);
+    glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER,vbo); glBufferData(GL_ARRAY_BUFFER, n*24, d, GL_STATIC_DRAW);
+    glVertexAttribPointer(0,3,GL_FLOAT,0,24,0); glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1,3,GL_FLOAT,0,24,(void*)12); glEnableVertexAttribArray(1);
+    return vao;
 }
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
-        GLuint vs = glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs, 1, &vS, 0); glCompileShader(vs);
-        GLuint fs = glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs, 1, &fS, 0); glCompileShader(fs);
-        prog = glCreateProgram(); glAttachShader(prog, vs); glAttachShader(prog, fs); glLinkProgram(prog);
-        glUseProgram(prog); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE);
-
-        vaoBody = createVAO(M_BODY, N_BODY); vaoHead = createVAO(M_HEAD, N_HEAD);
-        vaoCape = createVAO(M_CAPE, N_CAPE); vaoSword = createVAO(M_SWORD, N_SWORD);
-        vaoShield = createVAO(M_SHIELD, N_SHIELD); vaoTree = createVAO(M_TREE, N_TREE);
-        vaoRock = createVAO(M_ROCK, N_ROCK); vaoBush = createVAO(M_BUSH, N_BUSH);
-
-        float g[] = { -100,0,-100, 0.2f,0.5f,0.2f, 100,0,-100, 0.2f,0.5f,0.2f, -100,0,100, 0.2f,0.5f,0.2f,
-                       100,0,-100, 0.2f,0.5f,0.2f, 100,0,100, 0.2f,0.5f,0.2f, -100,0,100, 0.2f,0.5f,0.2f };
-        vaoGround = createVAO(g, 6);
+        GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
+        GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
+        prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog); glUseProgram(prog);
+        glEnable(GL_DEPTH_TEST); 
+        vaoHero=createVAO(M_BODY, N_BODY); vaoSword=createVAO(M_SWORD, N_SWORD); 
+        vaoShield=createVAO(M_SHIELD, N_SHIELD); vaoTree=createVAO(M_TREE, N_TREE);
+        float g[]={-100,0,-100,0.2,0.5,0.2, 100,0,-100,0.2,0.5,0.2, -100,0,100,0.2,0.5,0.2, 100,0,-100,0.2,0.5,0.2, 100,0,100,0.2,0.5,0.2, -100,0,100,0.2,0.5,0.2};
+        vaoGround=createVAO(g,6);
     }
-    
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
-        glViewport(0, 0, w, h); projMatrix = Mat4::perspective(3.14159f / 3.0f, (float)w / h, 0.1f, 100.0f);
+        glViewport(0,0,w,h); proj=Mat4::perspective(1.0f, (float)w/h, 0.1f, 100.0f);
     }
-    
-    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat camYaw, jfloat camPitch, jfloat camZoom) {
-        bool moving = (fabs(ix) > 0.05f || fabs(iy) > 0.05f);
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat yaw, jfloat pitch, jfloat zoom) {
+        if(fabs(ix)>0.05f || fabs(iy)>0.05f) {
+            float s=sin(yaw), c=cos(yaw), dx=ix*c-(-iy)*s, dz=ix*s+(-iy)*c;
+            px+=dx*0.15f; pz-=dz*0.15f; pf=atan2(-dx,dz); wt+=0.2f;
+        }
+        if(slash) { st+=0.3f; if(st>3.14f){ slash=false; st=0; } }
+        glClearColor(0.4f,0.7f,1.0f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glUniformMatrix4fv(glGetUniformLocation(prog,"pr"),1,0,proj.m);
+        Mat4 view = Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1,-pz));
+        glUniformMatrix4fv(glGetUniformLocation(prog,"v"),1,0,view.m);
         
-        // CAMERA-RELATIVE MOVEMENT MATH
-        if(!isBlocking && moving) { 
-            float s = sin(camYaw), c = cos(camYaw);
-            // Rotate the raw thumbstick input vector against the camera's current yaw
-            float dx = ix * c - (-iy) * s; 
-            float dz = ix * s + (-iy) * c;
-            
-            pX += dx * 0.15f; 
-            pZ -= dz * 0.15f; 
-            walkTimer += 0.2f; 
-            pFace = atan2(-dx, dz); // Character points toward movement
-        } else if (!moving) { walkTimer = 0; }
-        
-        if(isSlashing) { slashTimer += 0.3f; if(slashTimer > 3.14f) { isSlashing = false; slashTimer = 0; } }
+        glUniformMatrix4fv(glGetUniformLocation(prog,"m"),1,0,Mat4::identity().m);
+        glBindVertexArray(vaoGround); glDrawArrays(GL_TRIANGLES,0,6);
 
-        glClearColor(0.4f, 0.7f, 1.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        GLint lProj = glGetUniformLocation(prog, "uProj"), lView = glGetUniformLocation(prog, "uView"), lModl = glGetUniformLocation(prog, "uModel");
-        glUniformMatrix4fv(lProj, 1, GL_FALSE, projMatrix.m);
-
-        // ORBITAL CAMERA MATH
-        // We push the camera back by the zoom, pitch it down, yaw it around the origin, then translate the origin to the player
-        Mat4 viewMatrix = Mat4::translate(0, 0, -camZoom)
-            .multiply(Mat4::rotateX(-camPitch))
-            .multiply(Mat4::rotateY(-camYaw))
-            .multiply(Mat4::translate(-pX, -1.0f, -pZ));
-            
-        glUniformMatrix4fv(lView, 1, GL_FALSE, viewMatrix.m);
-
-        glUniformMatrix4fv(lModl, 1, GL_FALSE, Mat4::identity().m);
-        glBindVertexArray(vaoGround); glDrawArrays(GL_TRIANGLES, 0, 6);
-
-        // DETAILED WORLD GENERATION (Trees, Rocks, Bushes)
-        for(int i=-4; i<=4; i++) {
-            for(int j=-4; j<=4; j++) {
-                float wx = floor(pX/6.0f)*6.0f + i*6.0f, wz = floor(pZ/6.0f)*6.0f + j*6.0f;
-                float seed = fmod(wx*1.2f + wz*0.7f, 6.0f);
-                Mat4 tMat = Mat4::translate(wx, 0, wz);
-                glUniformMatrix4fv(lModl, 1, GL_FALSE, tMat.m); 
-                
-                if(seed > 5.0f) { glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES, 0, N_TREE); }
-                else if (seed > 4.5f) { glBindVertexArray(vaoRock); glDrawArrays(GL_TRIANGLES, 0, N_ROCK); }
-                else if (seed > 3.8f) { glBindVertexArray(vaoBush); glDrawArrays(GL_TRIANGLES, 0, N_BUSH); }
+        glBindVertexArray(vaoTree);
+        for(int i=-3; i<=3; i++) for(int j=-3; j<=3; j++) {
+            float wx=floor(px/8.f)*8.f+i*8.f, wz=floor(pz/8.f)*8.f+j*8.f;
+            if(fmod(wx*1.2f+wz*0.7f, 6.f)>4.5f) {
+                Mat4 m=Mat4::trans(wx,0,wz); glUniformMatrix4fv(glGetUniformLocation(prog,"m"),1,0,m.m);
+                glDrawArrays(GL_TRIANGLES,0,N_TREE);
             }
         }
+        Mat4 hero=Mat4::trans(px,sin(wt)*0.08f,pz).mul(Mat4::rotY(pf));
+        glUniformMatrix4fv(glGetUniformLocation(prog,"m"),1,0,hero.m);
+        glBindVertexArray(vaoHero); glDrawArrays(GL_TRIANGLES,0,N_BODY);
+        
+        Mat4 sword=hero; if(slash) sword=hero.mul(Mat4::trans(0,0.5,0)).mul(Mat4::rotX(-sin(st)*2.5)).mul(Mat4::trans(0,-0.5,0));
+        glUniformMatrix4fv(glGetUniformLocation(prog,"m"),1,0,sword.m);
+        glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
 
-        // PLAYER ANIMATION
-        float bob = sin(walkTimer) * 0.08f;
-        Mat4 baseTrans = Mat4::translate(pX, bob, pZ).multiply(Mat4::rotateY(pFace));
-
-        glUniformMatrix4fv(lModl, 1, GL_FALSE, baseTrans.m);
-        glBindVertexArray(vaoBody); glDrawArrays(GL_TRIANGLES, 0, N_BODY);
-        glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES, 0, N_HEAD);
-
-        Mat4 capeTrans = baseTrans.multiply(Mat4::rotateX(moving ? -0.4f : -0.1f));
-        glUniformMatrix4fv(lModl, 1, GL_FALSE, capeTrans.m);
-        glBindVertexArray(vaoCape); glDrawArrays(GL_TRIANGLES, 0, N_CAPE);
-
-        Mat4 swordTrans = baseTrans;
-        if(isSlashing) swordTrans = baseTrans.multiply(Mat4::translate(0, 0.5f, 0)).multiply(Mat4::rotateX(-sin(slashTimer) * 2.5f)).multiply(Mat4::translate(0, -0.5f, 0));
-        glUniformMatrix4fv(lModl, 1, GL_FALSE, swordTrans.m);
-        glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES, 0, N_SWORD);
-
-        Mat4 shieldTrans = baseTrans;
-        if(isBlocking) shieldTrans = baseTrans.multiply(Mat4::translate(0, 0.2f, 0.4f));
-        else if(moving) shieldTrans = baseTrans.multiply(Mat4::translate(0, -bob*2.0f, 0));
-        glUniformMatrix4fv(lModl, 1, GL_FALSE, shieldTrans.m);
-        glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES, 0, N_SHIELD);
+        Mat4 shield=hero; if(block) shield=hero.mul(Mat4::trans(0,0.2,0.4));
+        glUniformMatrix4fv(glGetUniformLocation(prog,"m"),1,0,shield.m);
+        glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
     }
-    
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1 && !isSlashing) { isSlashing = true; slashTimer = 0; } 
-        else if(id==2) isBlocking = true; else if(id==3) isBlocking = false;
+        if(id==1) slash=true; else if(id==2) block=true; else block=false;
     }
 }
 EOF
+
+# 4. Trigger Blender
+blender --background --python runtime/build_models.py
