@@ -1,22 +1,46 @@
 #!/bin/bash
 echo "Scaffolding Voxel RPG Project Structure..."
 
+# 1. Create Directory Tree
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
+mkdir -p runtime
 
-# 1. Root Gradle & Manifest
+# 2. Root settings.gradle (Crucial for Plugin Resolution)
 cat << 'EOF' > settings.gradle
-pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
 rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
+# 3. Root build.gradle (Defines Plugin Version)
+cat << 'EOF' > build.gradle
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+}
+EOF
+
+# 4. App build.gradle
 cat << 'EOF' > app/build.gradle
-plugins { id 'com.android.application' }
+plugins {
+    id 'com.android.application'
+}
 android {
     namespace 'com.game.procedural'
     compileSdk 34
@@ -30,6 +54,7 @@ android {
 }
 EOF
 
+# 5. Android Manifest
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -40,11 +65,11 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# 2. UI Layout (Action Buttons & Thumbstick)
+# 6. UI Resources
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
     <android.opengl.GLSurfaceView android:id="@+id/game_surface" android:layout_width="match_parent" android:layout_height="match_parent" />
-    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp" android:layout_alignParentBottom="true" android:layout_margin="30dp" android:background="@android:color/transparent" />
+    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp" android:layout_alignParentBottom="true" android:layout_margin="30dp" />
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp">
         <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp" android:text="🛡️" />
         <Button android:id="@+id/btn_sword" android:layout_width="80dp" android:layout_height="80dp" android:text="⚔️" />
@@ -52,7 +77,7 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 </RelativeLayout>
 EOF
 
-# 3. Java Activity (Orbital Camera Logic)
+# 7. Java Logic (Orbital Camera)
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
