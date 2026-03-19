@@ -1,30 +1,20 @@
 #!/bin/bash
-echo "Scaffolding Complete Android Project Structure..."
+echo "Scaffolding Voxel RPG Project Structure..."
 
-# 1. Create Directory Tree
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
-mkdir -p runtime
 
-# 2. Root Gradle Configuration
+# 1. Root Gradle & Manifest
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-dependencyResolutionManagement { 
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
-    repositories { google(); mavenCentral() } 
-}
+dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
 rootProject.name = "EndlessRPG"
 include ':app'
 EOF
 
-cat << 'EOF' > build.gradle
-plugins { id 'com.android.application' version '8.2.0' apply false }
-EOF
-
-# 3. App Module Configuration
 cat << 'EOF' > app/build.gradle
 plugins { id 'com.android.application' }
 android {
@@ -40,7 +30,6 @@ android {
 }
 EOF
 
-# 4. Android Manifest
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="EndlessRPG" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -51,25 +40,19 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# 5. UI Resources (Drawables & Layout)
-cat << 'EOF' > app/src/main/res/drawable/thumbstick_base.xml
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#44FFFFFF"/><stroke android:width="2dp" android:color="#FFFFFFFF"/></shape>
-EOF
-cat << 'EOF' > app/src/main/res/drawable/action_btn.xml
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#AA000000"/><stroke android:width="2dp" android:color="#AAAAAA"/></shape>
-EOF
+# 2. UI Layout (Action Buttons & Thumbstick)
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
     <android.opengl.GLSurfaceView android:id="@+id/game_surface" android:layout_width="match_parent" android:layout_height="match_parent" />
-    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp" android:layout_alignParentBottom="true" android:layout_margin="30dp" android:background="@drawable/thumbstick_base" />
-    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp" android:orientation="horizontal">
-        <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp" android:layout_marginRight="15dp" android:text="B" android:background="@drawable/action_btn" />
-        <Button android:id="@+id/btn_sword" android:layout_width="90dp" android:layout_height="90dp" android:text="A" android:background="@drawable/action_btn" />
+    <View android:id="@+id/thumbstick" android:layout_width="140dp" android:layout_height="140dp" android:layout_alignParentBottom="true" android:layout_margin="30dp" android:background="@android:color/transparent" />
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp">
+        <Button android:id="@+id/btn_shield" android:layout_width="80dp" android:layout_height="80dp" android:text="🛡️" />
+        <Button android:id="@+id/btn_sword" android:layout_width="80dp" android:layout_height="80dp" android:text="⚔️" />
     </LinearLayout>
 </RelativeLayout>
 EOF
 
-# 6. Java Activity (Orbital Camera Input)
+# 3. Java Activity (Orbital Camera Logic)
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 import android.app.Activity;
@@ -84,8 +67,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
     private float tX = 0f, tY = 0f;
     private float camYaw = 0.7f, camPitch = 0.5f, camZoom = 12.0f;
-    private float lastTouchX, lastTouchY;
-    private ScaleGestureDetector scaleDetector;
+    private float lastX, lastY;
+    private ScaleGestureDetector zoomDetector;
 
     static { System.loadLibrary("procedural_engine"); }
     private native void onCreated();
@@ -99,25 +82,24 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         setContentView(R.layout.activity_main);
         glView = findViewById(R.id.game_surface);
         glView.setEGLContextClientVersion(3);
-        glView.setEGLConfigChooser(8, 8, 8, 8, 16, 0); 
+        glView.setEGLConfigChooser(8,8,8,8,16,0);
         glView.setRenderer(this);
 
-        scaleDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        zoomDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override public boolean onScale(ScaleGestureDetector d) {
-                camZoom /= d.getScaleFactor();
-                camZoom = Math.max(4.0f, Math.min(30.0f, camZoom));
+                camZoom = Math.max(5f, Math.min(25f, camZoom / d.getScaleFactor()));
                 return true;
             }
         });
 
         glView.setOnTouchListener((v, e) -> {
-            scaleDetector.onTouchEvent(e);
-            if (!scaleDetector.isInProgress() && e.getPointerCount() == 1 && e.getX() > v.getWidth()/2f) {
-                if (e.getAction() == MotionEvent.ACTION_DOWN) { lastTouchX = e.getX(); lastTouchY = e.getY(); }
+            zoomDetector.onTouchEvent(e);
+            if (!zoomDetector.isInProgress() && e.getPointerCount() == 1 && e.getX() > v.getWidth()/2f) {
+                if (e.getAction() == MotionEvent.ACTION_DOWN) { lastX = e.getX(); lastY = e.getY(); }
                 else if (e.getAction() == MotionEvent.ACTION_MOVE) {
-                    camYaw += (e.getX() - lastTouchX) * 0.01f;
-                    camPitch = Math.max(0.1f, Math.min(1.5f, camPitch + (e.getY() - lastTouchY) * 0.01f));
-                    lastTouchX = e.getX(); lastTouchY = e.getY();
+                    camYaw += (e.getX() - lastX) * 0.01f;
+                    camPitch = Math.max(0.1f, Math.min(1.4f, camPitch + (e.getY() - lastY) * 0.01f));
+                    lastX = e.getX(); lastY = e.getY();
                 }
             }
             return true;
