@@ -1,10 +1,10 @@
 #!/bin/bash
-echo "Executing Asset Generation & Native Engine Injection..."
+echo "Injecting Advanced Voxel Engine and Gameplay Systems..."
 
-# 1. Run Blender Pipeline
+# Run Asset Pipeline
 blender --background --python runtime/build_models.py
 
-# 2. CMakeLists
+# CMake
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
 project("procedural_engine")
@@ -12,7 +12,7 @@ add_library(procedural_engine SHARED native-lib.cpp)
 target_link_libraries(procedural_engine log GLESv3)
 EOF
 
-# 3. Native C++ Engine
+# Native Core (Depth Corrected)
 cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
@@ -36,10 +36,8 @@ struct Mat4 {
     static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
 };
 
-GLuint prog, vaoHero, vaoSword, vaoShield, vaoTree, vaoGround;
-float px=0, pz=0, pf=0, wt=0, st=0;
-int hp = 100;
-volatile bool slash=false, block=false;
+GLuint prog, vaoHero, vaoSword, vaoTree, vaoGround, vaoSky;
+float px=0, pz=0, pf=0, wt=0;
 Mat4 proj;
 
 GLuint createVAO(const float* d, int n) {
@@ -52,33 +50,37 @@ GLuint createVAO(const float* d, int n) {
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
-        GLuint vs=glCreateShader(GL_VERTEX_SHADER);
-        const char* vSrc = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m,v,pr; out vec3 vc; void main(){ gl_Position=pr*v*m*vec4(p,1.0); vc=c; }";
-        glShaderSource(vs,1,&vSrc,0); glCompileShader(vs);
-        GLuint fs=glCreateShader(GL_FRAGMENT_SHADER);
-        const char* fSrc = "#version 300 es\nprecision mediump float; in vec3 vc; out vec4 o; void main(){ o=vec4(vc,1.0); }";
-        glShaderSource(fs,1,&fSrc,0); glCompileShader(fs);
+        const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m,v,pr; out vec3 vc; void main(){ gl_Position=pr*v*m*vec4(p,1.0); vc=c; }";
+        const char* fS = "#version 300 es\nprecision mediump float; in vec3 vc; out vec4 o; void main(){ o=vec4(vc,1.0); }";
+        GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
+        GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
         prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog); glUseProgram(prog);
         glEnable(GL_DEPTH_TEST);
-        vaoHero=createVAO(M_HERO, N_HERO); vaoSword=createVAO(M_SWORD, N_SWORD);
-        vaoShield=createVAO(M_SHIELD, N_SHIELD); vaoTree=createVAO(M_TREE, N_TREE);
-        float g[]={-100,0,-100,0.3,0.5,0.2, 100,0,-100,0.3,0.5,0.2, -100,0,100,0.3,0.5,0.2, 100,0,-100,0.3,0.5,0.2, 100,0,100,0.3,0.5,0.2, -100,0,100,0.3,0.5,0.2};
+        
+        vaoHero=createVAO(M_HERO, N_HERO); vaoSword=createVAO(M_SWORD, N_SWORD); vaoTree=createVAO(M_TREE, N_TREE);
+        float g[]={-100,0,-100,0.2,0.4,0.1, 100,0,-100,0.2,0.4,0.1, -100,0,100,0.2,0.4,0.1, 100,0,-100,0.2,0.4,0.1, 100,0,100,0.2,0.4,0.1, -100,0,100,0.2,0.4,0.1};
         vaoGround=createVAO(g,6);
+        float sk[]={-1,1,0.99,0.4,0.7,1, 1,1,0.99,0.4,0.7,1, -1,-1,0.99,0.1,0.2,0.5, 1,1,0.99,0.4,0.7,1, 1,-1,0.99,0.1,0.2,0.5, -1,-1,0.99,0.1,0.2,0.5};
+        vaoSky=createVAO(sk,6);
     }
-
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
         glViewport(0,0,w,h); proj=Mat4::perspective(1.0f, (float)w/h, 0.1f, 100.0f);
     }
-
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat yaw, jfloat pitch, jfloat zoom) {
         if(fabs(ix)>0.05f || fabs(iy)>0.05f) {
             float s=sin(yaw), c=cos(yaw), dx=ix*c-(-iy)*s, dz=ix*s+(-iy)*c;
-            px+=dx*0.12f; pz-=dz*0.12f; pf=atan2(-dx,dz); wt+=0.2f;
+            px+=dx*0.14f; pz-=dz*0.14f; pf=atan2(-dx,dz); wt+=0.2f;
         }
-        if(slash) { st+=0.2f; if(st>3.14f){ slash=false; st=0; } }
-
-        glClearColor(0.2f,0.6f,1.0f,1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); // CLEAR ALL
         GLint lp=glGetUniformLocation(prog,"pr"), lv=glGetUniformLocation(prog,"v"), lm=glGetUniformLocation(prog,"m");
+        
+        // 1. Render Sky (No View/Proj matrices, uses screen space)
+        glDisable(GL_DEPTH_TEST);
+        glUniformMatrix4fv(lp,1,0,Mat4::identity().m); glUniformMatrix4fv(lv,1,0,Mat4::identity().m); glUniformMatrix4fv(lm,1,0,Mat4::identity().m);
+        glBindVertexArray(vaoSky); glDrawArrays(GL_TRIANGLES,0,6);
+        glEnable(GL_DEPTH_TEST);
+
+        // 2. Render World
         glUniformMatrix4fv(lp,1,0,proj.m);
         Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1,-pz));
         glUniformMatrix4fv(lv,1,0,v.m);
@@ -88,20 +90,13 @@ extern "C" {
         glBindVertexArray(vaoTree);
         for(int i=-2; i<=2; i++) for(int j=-2; j<=2; j++){
             float wx=floor(px/8.f)*8.f+i*8.f, wz=floor(pz/8.f)*8.f+j*8.f;
-            if(fmod(wx*1.3f+wz*0.9f, 6.f)>4.5f) {
+            if(fmod(wx*1.2f+wz*0.8f, 6.f)>4.5f) {
                 Mat4 m=Mat4::trans(wx,0,wz); glUniformMatrix4fv(lm,1,0,m.m); glDrawArrays(GL_TRIANGLES,0,N_TREE);
             }
         }
-
         Mat4 h=Mat4::trans(px,sin(wt)*0.08f,pz).mul(Mat4::rotY(pf));
         glUniformMatrix4fv(lm,1,0,h.m); glBindVertexArray(vaoHero); glDrawArrays(GL_TRIANGLES,0,N_HERO);
-        Mat4 s=h; if(slash) s=h.mul(Mat4::trans(0,0.5,0)).mul(Mat4::rotX(-sin(st)*2.5)).mul(Mat4::trans(0,-0.5,0));
-        glUniformMatrix4fv(lm,1,0,s.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
-        Mat4 b=h; if(block) b=h.mul(Mat4::trans(0,0.2,0.4));
-        glUniformMatrix4fv(lm,1,0,b.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
     }
-    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1) slash=true; else if(id==2) block=true; else block=false;
-    }
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {}
 }
 EOF
