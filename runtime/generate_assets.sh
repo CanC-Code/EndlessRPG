@@ -1,24 +1,22 @@
 #!/bin/bash
-echo "Generating Advanced Voxel Models and Terrain Chunks..."
+echo "Generating Realistic 3D Models..."
 
-cat << 'EOF' > runtime/python/build_models.py
+cat << 'EOF' > runtime/python/export_utils.py
 import bpy
-import bmesh
-import random
-from math import radians
 
 def clean():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
 
-def export_model(name, r, g, b, build_func, is_terrain=False):
+def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     clean()
     build_func()
     
+    # REALISTIC AESTHETIC: Use Smooth Shading everywhere
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH':
-            for poly in obj.data.polygons: poly.use_smooth = False
-
+            for poly in obj.data.polygons: poly.use_smooth = True
+            
     bpy.ops.object.select_all(action='SELECT')
     bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
     bpy.ops.object.join()
@@ -33,68 +31,70 @@ def export_model(name, r, g, b, build_func, is_terrain=False):
     height = max((v.co.z for v in mesh.vertices), default=1) - min_z
 
     for tri in mesh.loop_triangles:
-        # Hard face normals for pixel shading
-        lum = 0.5 + (tri.normal.z * 0.4) + (tri.normal.x * 0.1)
         for loop_idx in tri.loops:
             v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
-            verts.extend([v.co.x, v.co.z, -v.co.y]) # Y-up for GL
-            ao = 0.4 + (0.6 * ((v.co.z - min_z) / height)) if height > 0 else 1.0
+            verts.extend([v.co.x, v.co.z, -v.co.y])
             
-            # Terrain color variance based on height
-            if is_terrain:
-                if v.co.z > 0.2: cr, cg, cb = 0.4, 0.4, 0.4 # Stone
-                else: cr, cg, cb = r, g, b # Grass
-            else: cr, cg, cb = r, g, b
+            # Use Vertex Normals for smooth lighting transitions
+            norm = v.normal
+            lum = 0.5 + (norm.z * 0.4) + (norm.x * 0.1)
+            ao = 0.5 + (0.5 * ((v.co.z - min_z) / height)) if height > 0 else 1.0
             
-            verts.extend([cr*lum*ao, cg*lum*ao, cb*lum*ao])
-    return verts
-
-def build_hero():
-    bpy.ops.mesh.primitive_cube_add(size=0.6, location=(0,0,0.8)) # Torso
-    bpy.ops.mesh.primitive_cube_add(size=0.4, location=(0,0,1.4)) # Head
-    bpy.ops.mesh.primitive_cube_add(size=0.2, location=(0.4,0,0.8)) # Arm R
-    bpy.ops.mesh.primitive_cube_add(size=0.2, location=(-0.4,0,0.8)) # Arm L
-    bpy.ops.mesh.primitive_cube_add(size=0.25, location=(0.15,0,0.25)) # Leg R
-    bpy.ops.mesh.primitive_cube_add(size=0.25, location=(-0.15,0,0.25)) # Leg L
-
-def build_sword():
-    bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0.4,0.4,0.8))
-    bpy.ops.mesh.primitive_cube_add(size=0.3, location=(0.4,0.4,1.0))
-    bpy.ops.mesh.primitive_cube_add(size=0.15, location=(0.4,0.4,1.4))
-    bpy.context.object.scale = (0.5, 0.2, 4.0)
-
-def build_shield():
-    bpy.ops.mesh.primitive_cube_add(size=0.7, location=(-0.4,0.3,0.9))
-    bpy.context.object.scale = (1, 0.1, 1.2)
-
-def build_tree():
-    bpy.ops.mesh.primitive_cube_add(size=0.3, location=(0,0,0.5))
-    bpy.context.object.scale = (1,1,3)
-    bpy.ops.mesh.primitive_cube_add(size=1.4, location=(0,0,1.8))
-    bpy.ops.mesh.primitive_cube_add(size=0.8, location=(0,0,2.8))
-
-def build_terrain_chunk():
-    # Real Ground: 8x8 meter physical chunk with height variance
-    bpy.ops.mesh.primitive_grid_add(size=8, x_subdivisions=8, y_subdivisions=8)
-    bm = bmesh.new()
-    bm.from_mesh(bpy.context.object.data)
-    for v in bm.verts: v.co.z = random.uniform(-0.1, 0.3)
-    bm.to_mesh(bpy.context.object.data)
-    bm.free()
-
-models = [
-    ("HERO", 0.8,0.8,0.9, build_hero, False),
-    ("SWORD", 0.5,0.8,1.0, build_sword, False),
-    ("SHIELD", 0.5,0.3,0.1, build_shield, False),
-    ("TREE", 0.2,0.6,0.1, build_tree, False),
-    ("TERRAIN", 0.2,0.5,0.1, build_terrain_chunk, True)
-]
-
-with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
-    f.write("#pragma once\n")
-    for n, r, g, b, func, is_t in models:
-        d = export_model(n, r, g, b, func, is_t)
-        f.write(f"const float M_{n}[] = {{ {', '.join(map(str, d))} }};\nconst int N_{n} = {len(d)//6};\n")
+            # Subtle variation for terrain
+            if is_terrain and v.co.z > 0.05:
+                verts.extend([0.4*lum*ao, 0.4*lum*ao, 0.4*lum*ao]) # Rock
+            else:
+                verts.extend([r*lum*ao, g*lum*ao, b*lum*ao])
+            
+    with open(outfile, "a") as f:
+        f.write(f"const float M_{name}[] = {{ {', '.join(map(str, verts))} }};\n")
+        f.write(f"const int N_{name} = {len(verts)//6};\n")
 EOF
 
-blender --background --python runtime/python/build_models.py
+cat << 'EOF' > runtime/python/gen_models.py
+import bpy, sys
+sys.path.append('runtime/python')
+from export_utils import bake_and_export
+
+def build_hero():
+    # Capsule Body
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.3, depth=1.0, location=(0,0,0.8))
+    # Spherical Head
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=16, ring_count=16, radius=0.25, location=(0,0,1.5))
+    # Shoulders
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=12, radius=0.15, location=(0.35,0,1.1))
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=12, radius=0.15, location=(-0.35,0,1.1))
+
+def build_sword():
+    # Pommel
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=12, radius=0.08, location=(0.4,0.4,0.7))
+    # Grip
+    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.04, depth=0.4, location=(0.4,0.4,0.9))
+    # Crossguard
+    bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0.4,0.4,1.1))
+    bpy.context.object.scale = (3.0, 0.5, 0.5)
+    # Tapered Blade
+    bpy.ops.mesh.primitive_cone_add(vertices=4, radius1=0.1, radius2=0.01, depth=1.2, location=(0.4,0.4,1.7))
+    bpy.context.object.scale = (1.0, 0.2, 1.0)
+    bpy.context.object.rotation_euler = (0, 0, 0.785) # Diamond shape
+
+def build_tree():
+    # Smooth Trunk
+    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.2, depth=1.5, location=(0,0,0.75))
+    # Organic layered foliage
+    bpy.ops.mesh.primitive_icosphere_add(subdivisions=2, radius=1.2, location=(0,0,2.0))
+    bpy.ops.mesh.primitive_icosphere_add(subdivisions=2, radius=0.9, location=(0,0,2.8))
+    bpy.ops.mesh.primitive_icosphere_add(subdivisions=2, radius=0.6, location=(0,0,3.4))
+
+def build_terrain():
+    # Detailed grid for vertex displacement in C++
+    bpy.ops.mesh.primitive_grid_add(size=8, x_subdivisions=16, y_subdivisions=16)
+
+with open("app/src/main/cpp/models/AllModels.h", "w") as f: f.write("#pragma once\n")
+bake_and_export("HERO", 0.2, 0.3, 0.8, build_hero, "app/src/main/cpp/models/AllModels.h")
+bake_and_export("SWORD", 0.8, 0.8, 0.9, build_sword, "app/src/main/cpp/models/AllModels.h")
+bake_and_export("TREE", 0.1, 0.4, 0.1, build_tree, "app/src/main/cpp/models/AllModels.h")
+bake_and_export("TERRAIN", 0.3, 0.6, 0.2, build_terrain, "app/src/main/cpp/models/AllModels.h", True)
+EOF
+
+blender --background --python runtime/python/gen_models.py
