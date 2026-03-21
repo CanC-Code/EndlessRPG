@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Injecting Modular C++ Engine..."
+echo "Injecting C++ Engine with Distance Fog and Chunk Rendering..."
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -12,9 +12,7 @@ cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <jni.h>
 #include <GLES3/gl3.h>
 #include <cmath>
-#include "models/Hero.h"
-#include "models/Items.h"
-#include "models/World.h"
+#include "GeneratedModels.h"
 
 struct Mat4 {
     float m[16] = {0};
@@ -32,7 +30,7 @@ struct Mat4 {
     static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
 };
 
-GLuint prog, vaoHero, vaoSword, vaoShield, vaoTree, vaoGround;
+GLuint prog, vaoHero, vaoSword, vaoShield, vaoTree, vaoTerrain;
 float px=0, pz=0, pf=0, wt=0, st=0;
 volatile bool slash=false, block=false;
 Mat4 proj;
@@ -47,25 +45,26 @@ GLuint createVAO(const float* d, int n) {
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
-        const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m,v,pr; out vec3 vc; void main(){ gl_Position=pr*v*m*vec4(p,1.0); vc=c; }";
-        const char* fS = "#version 300 es\nprecision mediump float; in vec3 vc; out vec4 o; void main(){ o=vec4(vc,1.0); }";
+        // VERTEX SHADER: Passes View-Space position to fragment for fog calculation
+        const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m,v,pr; out vec3 vc; out vec4 viewPos; void main(){ viewPos=v*m*vec4(p,1.0); gl_Position=pr*viewPos; vc=c; }";
+        
+        // FRAGMENT SHADER: Implements physical Distance Fog blending to the sky color
+        const char* fS = "#version 300 es\nprecision mediump float; in vec3 vc; in vec4 viewPos; out vec4 o; void main(){ float dist=length(viewPos.xyz); float fog=clamp((dist-15.0)/35.0, 0.0, 1.0); vec3 sky=vec3(0.5,0.7,1.0); o=vec4(mix(vc,sky,fog), 1.0); }";
+        
         GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
         GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
         prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog); glUseProgram(prog);
+        
         glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
         
-        vaoHero=createVAO(M_HERO, N_HERO); 
-        vaoSword=createVAO(M_SWORD, N_SWORD); 
-        vaoShield=createVAO(M_SHIELD, N_SHIELD); 
-        vaoTree=createVAO(M_TREE, N_TREE);
-        
-        // Extended ground plane to ensure no visual clipping
-        float g[]={-300,0,-300,0.2,0.4,0.1, 300,0,-300,0.2,0.4,0.1, -300,0,300,0.2,0.4,0.1, 300,0,-300,0.2,0.4,0.1, 300,0,300,0.2,0.4,0.1, -300,0,300,0.2,0.4,0.1};
-        vaoGround=createVAO(g,6);
+        vaoHero=createVAO(M_HERO, N_HERO); vaoSword=createVAO(M_SWORD, N_SWORD); 
+        vaoShield=createVAO(M_SHIELD, N_SHIELD); vaoTree=createVAO(M_TREE, N_TREE);
+        vaoTerrain=createVAO(M_TERRAIN, N_TERRAIN);
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
-        glViewport(0,0,w,h); proj=Mat4::perspective(1.0f, (float)w/h, 0.1f, 150.0f);
+        glViewport(0,0,w,h); proj=Mat4::perspective(1.0f, (float)w/h, 0.1f, 100.0f);
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat yaw, jfloat pitch, jfloat zoom) {
@@ -75,7 +74,7 @@ extern "C" {
         }
         if(slash) { st+=0.2f; if(st>3.14f){ slash=false; st=0; } }
 
-        // Clean Sky Color
+        // Sky Color matches Fragment Fog Color
         glClearColor(0.5f, 0.7f, 1.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); 
         
@@ -84,19 +83,19 @@ extern "C" {
         Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1,-pz));
         glUniformMatrix4fv(lv,1,0,v.m);
         
-        // Ground
-        glUniformMatrix4fv(lm,1,0,Mat4::identity().m); glBindVertexArray(vaoGround); glDrawArrays(GL_TRIANGLES,0,6);
-        
-        // World Generation
-        glBindVertexArray(vaoTree);
-        for(int i=-3; i<=3; i++) for(int j=-3; j<=3; j++){
-            float wx=floor(px/8.f)*8.f+i*8.f, wz=floor(pz/8.f)*8.f+j*8.f;
-            if(fmod(wx*1.2f+wz*0.8f, 6.f)>4.5f) {
-                Mat4 m=Mat4::trans(wx,0,wz); glUniformMatrix4fv(lm,1,0,m.m); glDrawArrays(GL_TRIANGLES,0,N_TREE);
+        // Draw Infinite Terrain Grid using physical chunks
+        for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
+            float tx=floor(px/8.f)*8.f+i*8.f, tz=floor(pz/8.f)*8.f+j*8.f;
+            Mat4 tm=Mat4::trans(tx,0,tz); glUniformMatrix4fv(lm,1,0,tm.m);
+            glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
+            
+            // Scatter Trees onto the chunks
+            if(fmod(tx*1.2f+tz*0.8f, 6.f)>4.5f) {
+                glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES,0,N_TREE);
             }
         }
         
-        // Character & Items
+        // Draw Hero & Equipment
         Mat4 h=Mat4::trans(px,sin(wt)*0.08f,pz).mul(Mat4::rotY(pf));
         glUniformMatrix4fv(lm,1,0,h.m); glBindVertexArray(vaoHero); glDrawArrays(GL_TRIANGLES,0,N_HERO);
         
