@@ -22,15 +22,19 @@ jobs:
         run: |
           curl -L https://mirrors.ocf.berkeley.edu/blender/release/Blender4.0/blender-4.0.2-linux-x64.tar.xz -o blender.tar.xz
           tar -xvf blender.tar.xz --strip-components=1
+          # Add current directory to PATH so 'blender' command is globally available to scripts
           echo "$(pwd)" >> $GITHUB_PATH
 
-      - name: Run Project Scaffolder
-        run: bash scripts/setup_project.sh
-
-      - name: Execute Runtime Content Generation
+      - name: Execute Full Modular Project Generation
         run: |
-          chmod +x runtime/generate_game.sh
-          ./runtime/generate_game.sh
+          # Grant execution permissions to the master wrapper and all sub-scripts
+          chmod +x build_all.sh
+          chmod +x scripts/setup_project.sh
+          chmod +x runtime/generate_assets.sh
+          chmod +x runtime/generate_engine.sh
+          
+          # Run the master pipeline to scaffold Android, build voxel assets, and inject C++
+          ./build_all.sh
 
       - name: Initialize Gradle Wrapper
         run: gradle wrapper
@@ -38,6 +42,7 @@ jobs:
       - name: Build Debug APK
         run: |
           chmod +x gradlew
+          # assembleDebug will now find the dynamically generated C++ models and UI resources
           ./gradlew :app:assembleDebug
 
       - name: Upload APK
