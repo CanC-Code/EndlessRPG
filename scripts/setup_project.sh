@@ -6,7 +6,7 @@ mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 
-# 2. Generate Gradle Build Files (Modern Gradle 9+ Syntax)
+# 2. Generate Gradle Build Files
 cat << 'EOF' > settings.gradle
 pluginManagement {
     repositories {
@@ -27,7 +27,6 @@ include ':app'
 EOF
 
 cat << 'EOF' > build.gradle
-// Modern Plugins block replaces the deprecated 'buildscript' classpath
 plugins {
     id 'com.android.application' version '8.3.0' apply false
 }
@@ -84,11 +83,10 @@ find_library(EGL-lib EGL)
 target_link_libraries(procedural_engine ${log-lib} ${GLES3-lib} ${EGL-lib})
 EOF
 
-# 4. Generate Android Manifest
+# 4. Generate Android Manifest (Fixed namespace)
 cat << 'EOF' > app/src/main/AndroidManifest.xml
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.game.procedural">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <application
         android:allowBackup="true"
@@ -106,7 +104,7 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# 5. Generate UI Layout (activity_main.xml)
+# 5. Generate UI Layout (Fixed Joystick alignment error)
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -184,22 +182,27 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
             android:layout_marginRight="16dp"
             android:text="Action" />
 
-        <ImageView
-            android:id="@+id/joystick_bg"
+        <RelativeLayout
             android:layout_width="120dp"
             android:layout_height="120dp"
             android:layout_alignParentBottom="true"
             android:layout_alignParentLeft="true"
             android:layout_marginBottom="32dp"
-            android:layout_marginLeft="32dp"
-            android:background="#44FFFFFF"/>
+            android:layout_marginLeft="32dp">
 
-        <ImageView
-            android:id="@+id/joystick_knob"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
-            android:layout_alignCenter="@id/joystick_bg"
-            android:background="#88FFFFFF" />
+            <ImageView
+                android:id="@+id/joystick_bg"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#44FFFFFF"/>
+
+            <ImageView
+                android:id="@+id/joystick_knob"
+                android:layout_width="50dp"
+                android:layout_height="50dp"
+                android:layout_centerInParent="true"
+                android:background="#88FFFFFF" />
+        </RelativeLayout>
             
     </RelativeLayout>
 
