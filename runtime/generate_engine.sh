@@ -32,7 +32,7 @@ uniform vec3 u_SunColor;
 uniform vec3 u_NightAmbient;
 
 void main() {
-    // 1. Lighting Calculation
+    // Realistic directional lighting
     vec3 norm = normalize(v_Normal);
     vec3 lightDir = normalize(u_SunDirection);
     float diff = max(dot(norm, lightDir), 0.0);
@@ -40,13 +40,13 @@ void main() {
     vec3 ambient = mix(u_NightAmbient, vec3(0.4), diff); 
     vec3 resultColor = ambient + diffuse;
     
-    // 2. Pencil Art Post-Processing
+    // Pencil Art Post-Processing (High Resolution, No Surrealism)
     float gray = dot(resultColor, vec3(0.299, 0.587, 0.114));
     
     float shade = 1.0;
-    if (gray < 0.25) shade = 0.2;      // Heavy pencil
+    if (gray < 0.25) shade = 0.2;       // Heavy graphite
     else if (gray < 0.55) shade = 0.55; // Mid-tone hatching
-    else shade = 0.95;                 // Paper
+    else shade = 0.95;                  // Clean paper
     
     vec3 graphiteColor = vec3(0.18, 0.18, 0.20);
     vec3 paperColor = vec3(0.95, 0.95, 0.92);
@@ -57,12 +57,11 @@ void main() {
 )";
 
 // --- SEAMLESS TERRAIN GENERATION (fBm) ---
-// Simple hash-based pseudo-random noise
+// Pseudo-random noise for terrain vertices
 float random(vec2 st) {
     return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453123);
 }
 
-// 2D Noise
 float noise(vec2 st) {
     vec2 i = floor(st);
     vec2 f = fract(st);
@@ -74,22 +73,20 @@ float noise(vec2 st) {
     return mix(a, b, u.x) + (c - a)* u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
 }
 
-// Fractional Brownian Motion for lifelike cliffs and seamless chunks
+// Fractional Brownian Motion (Eliminates clipping seams, creates lifelike cliffs)
 float fbm(vec2 st) {
     float value = 0.0;
-    float amplitude = .5;
-    float frequency = 0.;
+    float amplitude = 0.5;
     for (int i = 0; i < 6; i++) {
         value += amplitude * noise(st);
         st *= 2.0;
-        amplitude *= .5;
+        amplitude *= 0.5;
     }
     return value;
 }
 
-// Engine Loop stub
+// Seamless Sun/Moon orbit
 void update_day_night_cycle(float timePassed, float& sunX, float& sunY) {
-    // Moves the sun in a seamless arc
     sunX = sin(timePassed * 0.1f);
     sunY = cos(timePassed * 0.1f);
 }
