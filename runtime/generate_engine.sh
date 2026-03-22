@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# Purpose: HD Engine with Per-Pixel Shading, Anti-Clipping FPS Camera, and Wind physics.
+# Purpose: HD Engine with Quadratic Wind Physics, Specular Lighting, and Anti-Clipping FPS Camera.
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -46,6 +46,7 @@ struct Mat4 {
     static Mat4 trans(float x, float y, float z) { Mat4 r=identity(); r.m[12]=x; r.m[13]=y; r.m[14]=z; return r; }
     static Mat4 rotY(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[2]=-sin(a); r.m[8]=sin(a); r.m[10]=cos(a); return r; }
     static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
+    static Mat4 rotZ(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[1]=sin(a); r.m[4]=-sin(a); r.m[5]=cos(a); return r; }
 };
 
 float getTerrainHeight(float x, float z) {
@@ -66,47 +67,60 @@ bool block=false;
 GLuint createVAO(const float* d, int n) {
     GLuint vao, vbo; glGenVertexArrays(1,&vao); glGenBuffers(1,&vbo);
     glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER,vbo);
-    glBufferData(GL_ARRAY_BUFFER, n*44, d, GL_STATIC_DRAW); // 44 byte stride for HD Normals
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,44,(void*)0); glEnableVertexAttribArray(0);  // Pos
-    glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,44,(void*)12); glEnableVertexAttribArray(1); // Norm
-    glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,44,(void*)24); glEnableVertexAttribArray(2); // Col
-    glVertexAttribPointer(3,2,GL_FLOAT,GL_FALSE,44,(void*)36); glEnableVertexAttribArray(3); // UV
+    glBufferData(GL_ARRAY_BUFFER, n*44, d, GL_STATIC_DRAW); // 44 byte stride for HD
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,44,(void*)0); glEnableVertexAttribArray(0);  
+    glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,44,(void*)12); glEnableVertexAttribArray(1); 
+    glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,44,(void*)24); glEnableVertexAttribArray(2); 
+    glVertexAttribPointer(3,2,GL_FLOAT,GL_FALSE,44,(void*)36); glEnableVertexAttribArray(3); 
     return vao;
 }
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
-        // Vertex Shader: Calculates proper world-space normals and executes Wind physics
         const char* vS = "#version 300 es\n"
             "layout(location=0) in vec3 p; layout(location=1) in vec3 n; layout(location=2) in vec3 c; layout(location=3) in vec2 uv;\n"
             "uniform mat4 m,v,pr; uniform float uType; uniform float uTime;\n"
-            "out vec3 vPos; out vec3 vNorm; out vec3 vCol;\n"
+            "out vec3 vPos; out vec3 vNorm; out vec3 vCol; out vec4 sPos;\n"
             "void main(){\n"
             "  vec3 pos = p;\n"
-            "  if(uType == 1.0) pos.y += sin(pos.x*0.4)*cos(pos.z*0.4)*1.5;\n" // Terrain
-            "  if(uType == 2.0 && pos.y > 0.1) {\n" // Wind Physics for Grass/Wheat
-            "      pos.x += sin(uTime * 3.0 + m[3][0] + m[3][2]) * 0.15 * pos.y;\n"
-            "      pos.z += cos(uTime * 2.5 + m[3][0] + m[3][2]) * 0.15 * pos.y;\n"
+            "  if(uType == 1.0) pos.y += sin(pos.x*0.4)*cos(pos.z*0.4)*1.5;\n"
+            // QUADRATIC WIND PHYSICS: Base of grass stays completely still, tip sways realistically
+            "  if(uType == 2.0 && pos.y > 0.05) {\n"
+            "      float sway = (pos.y * pos.y); \n" 
+            "      pos.x += sin(uTime * 3.0 + m[3][0] + m[3][2]) * 0.2 * sway;\n"
+            "      pos.z += cos(uTime * 2.5 + m[3][0] + m[3][2]) * 0.2 * sway;\n"
             "  }\n"
             "  vec4 w = m * vec4(pos, 1.0);\n"
             "  vPos = w.xyz; vNorm = mat3(m) * n; vCol = c;\n"
-            "  gl_Position = pr * v * w;\n"
+            "  sPos = pr * v * w;\n"
+            "  gl_Position = sPos;\n"
             "}";
         
-        // Fragment Shader: HD Per-Pixel Lighting and Atmospheric Horizon Fog
         const char* fS = "#version 300 es\n"
             "precision highp float;\n"
-            "in vec3 vPos; in vec3 vNorm; in vec3 vCol;\n"
+            "in vec3 vPos; in vec3 vNorm; in vec3 vCol; in vec4 sPos;\n"
             "uniform vec3 uCamPos; uniform float uType; uniform float uTime;\n"
             "out vec4 o;\n"
             "void main(){\n"
             "  vec3 norm = normalize(vNorm);\n"
             "  vec3 lightDir = normalize(vec3(0.5, 1.0, 0.4));\n"
-            "  float diff = max(dot(norm, lightDir), 0.25);\n" // HD Smooth Shading
-            "  vec3 col = vCol * diff;\n"
+            // HD Shading with Specular Highlights for Grass Blades
+            "  float diff = max(dot(norm, lightDir), 0.25);\n"
+            "  vec3 viewDir = normalize(uCamPos - vPos);\n"
+            "  vec3 halfDir = normalize(lightDir + viewDir);\n"
+            "  float spec = pow(max(dot(norm, halfDir), 0.0), 16.0) * 0.3;\n"
+            "  if(uType != 2.0) spec = 0.0;\n" // Only grass/wheat is shiny
+            "  \n"
+            "  vec3 col = (vCol * diff) + vec3(spec);\n"
+            // Pencil Sketch Overlay
+            "  vec2 scr = sPos.xy / sPos.w;\n"
+            "  float hatch = sin(scr.x * 300.0 + scr.y * 300.0) * sin(scr.x * -300.0 + scr.y * 300.0);\n"
+            "  float lum = dot(col, vec3(0.299, 0.587, 0.114));\n"
+            "  if(lum < 0.35 && hatch < 0.0) { col *= 0.7; }\n"
+            "  \n"
             "  float dist = length(vPos - uCamPos);\n"
-            "  float fog = smoothstep(15.0, 40.0, dist);\n"
-            "  vec3 sky = vec3(0.5, 0.7, 0.95);\n" // Blends beautifully into sky
+            "  float fog = smoothstep(20.0, 45.0, dist);\n"
+            "  vec3 sky = vec3(0.65, 0.75, 0.85);\n"
             "  o = vec4(mix(col, sky, fog), 1.0);\n"
             "}";
 
@@ -122,7 +136,7 @@ extern "C" {
         vaoWheat = createVAO(M_WHEAT, N_WHEAT); vaoTree = createVAO(M_TREE, N_TREE);
         vaoTerrain = createVAO(M_TERRAIN, N_TERRAIN);
 
-        glClearColor(0.5f, 0.7f, 0.95f, 1.0f); // Match Fog Color
+        glClearColor(0.65f, 0.75f, 0.85f, 1.0f); 
         glEnable(GL_DEPTH_TEST);
     }
 
@@ -141,18 +155,18 @@ extern "C" {
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat yaw, jfloat pitch, jfloat zoom) {
-        wt += 0.05f; // Always increment wind time
+        wt += 0.05f; 
         if(slashT > 0) slashT -= 0.05f;
         if(jumpT > 0) jumpT -= 0.04f;
         if(bashT > 0) bashT -= 0.08f;
         
-        // TRUE NORTH CONTROLLER INPUT: Joystick accurately moves relative to the camera yaw
+        // TRUE NORTH WALKING: Joystick exactly matches camera view
         if(fabs(ix)>0.0f || fabs(iy)>0.0f) {
-            float speed = 0.1f;
+            float speed = 0.12f;
             float moveX = (ix * cos(yaw) + iy * sin(yaw)) * speed;
             float moveZ = (-ix * sin(yaw) + iy * cos(yaw)) * speed;
             px += moveX; pz += moveZ; 
-            pf = atan2(-moveX, moveZ); // Character smoothly rotates to face walking direction
+            pf = atan2(-moveX, moveZ); 
         }
         
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
@@ -162,56 +176,55 @@ extern "C" {
         
         float jumpY = (jumpT > 0) ? 4.0f * jumpT * (1.0f - jumpT) : 0.0f;
         float th = getTerrainHeight(px, pz);
-        float pHead = th + 1.5f + jumpY; // Player Eye Level
+        float pHead = th + 1.5f + jumpY; 
 
         // CAMERA SYSTEM: FPS Snap & Anti-Clipping LookAt Logic
         bool isFPS = (zoom < 2.0f);
         float actualZoom = isFPS ? 0.0f : zoom;
         
-        // Calculate raw camera orbit position
         float camX = px + actualZoom * sin(yaw) * cos(pitch);
         float camY = pHead + actualZoom * sin(pitch);
         float camZ = pz + actualZoom * cos(yaw) * cos(pitch);
 
-        // Anti-Clipping: Prevent camera from diving under the terrain hills!
+        // Solid ground collision for camera
         if (!isFPS) {
             float camTh = getTerrainHeight(camX, camZ);
-            if (camY < camTh + 0.5f) { camY = camTh + 0.5f; }
+            if (camY < camTh + 0.4f) { camY = camTh + 0.4f; }
         }
 
         glUniform3f(glGetUniformLocation(prog, "uCamPos"), camX, camY, camZ);
-        Mat4 v = Mat4::lookAt({camX, camY, camZ}, {px, pHead - (isFPS ? 0.0f : 0.5f), pz}, {0, 1, 0});
+        Mat4 v = Mat4::lookAt({camX, camY, camZ}, {px, pHead - (isFPS ? 0.0f : 0.4f), pz}, {0, 1, 0});
         glUniformMatrix4fv(glGetUniformLocation(prog,"v"),1,GL_FALSE,v.m);
         
         GLint lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"uType");
 
-        // 1. TERRAIN (uType 1)
+        // 1. TERRAIN
         glUniform1f(lt, 1.0f);
-        for(int i=-3; i<=3; i++) for(int j=-3; j<=3; j++) {
+        for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
             Mat4 tm=Mat4::trans(tx,0,tz);
             glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
 
-        // 2. PROCEDURAL CLUTTER (Trees, Rocks, Grass, Wheat)
-        for(int i=-12; i<=12; i++) for(int j=-12; j<=12; j++) {
-            float tx=floor(px/2.f)*2.f+i*2.f, tz=floor(pz/2.f)*2.f+j*2.f;
+        // 2. PROCEDURAL HD CLUTTER
+        for(int i=-16; i<=16; i++) for(int j=-16; j<=16; j++) {
+            float tx=floor(px/1.5f)*1.5f+i*1.5f, tz=floor(pz/1.5f)*1.5f+j*1.5f;
             float hsh = hash(tx, tz);
             float ty = getTerrainHeight(tx, tz);
             Mat4 tm=Mat4::trans(tx, ty, tz).mul(Mat4::rotY(hsh * 6.28f));
             
-            if(hsh > 0.96f) {
+            if(hsh > 0.97f) {
                 glUniform1f(lt, 0.0f); glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES,0,N_TREE);
             } else if (hsh > 0.90f) {
                 glUniform1f(lt, 0.0f); glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoRock); glDrawArrays(GL_TRIANGLES,0,N_ROCK);
-            } else if (hsh > 0.70f) {
+            } else if (hsh > 0.65f) {
                 glUniform1f(lt, 2.0f); glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoWheat); glDrawArrays(GL_TRIANGLES,0,N_WHEAT);
-            } else if (hsh > 0.20f) {
+            } else if (hsh > 0.15f) {
                 glUniform1f(lt, 2.0f); glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoGrass); glDrawArrays(GL_TRIANGLES,0,N_GRASS);
             }
         }
 
-        // 3. CHARACTER RENDERING (Hidden in FPS mode)
+        // 3. HD CHARACTER RENDERING
         if (!isFPS) {
             glUniform1f(lt, 0.0f);
             Mat4 tBase = Mat4::trans(px, th+1.0f+jumpY, pz).mul(Mat4::rotY(pf));
@@ -220,26 +233,26 @@ extern "C" {
             Mat4 mHead = tBase.mul(Mat4::trans(0, 0.8f, 0));
             glUniformMatrix4fv(lm,1,GL_FALSE,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-            // RIGHT ARM & SHIELD
+            // RIGHT ARM & SHIELD (Strapped directly to forearm)
             float sRot = block ? -1.5f : (bashT > 0 ? -1.8f : sin(wt*4.0f)*0.2f);
             Mat4 mRArm = tBase.mul(Mat4::trans(-0.38f, 0.6f, 0)).mul(Mat4::rotX(sRot));
             glUniformMatrix4fv(lm,1,GL_FALSE,mRArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+            
             Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX(block ? -0.8f : 0.0f)); 
             glUniformMatrix4fv(lm,1,GL_FALSE,mRFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-            // Shield attaches outside arm, rigidly bound
-            Mat4 mShield = mRFore.mul(Mat4::trans(-0.1f, -0.2f, 0)); 
+            Mat4 mShield = mRFore.mul(Mat4::trans(-0.05f, -0.15f, 0)); 
             glUniformMatrix4fv(lm,1,GL_FALSE,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
 
-            // LEFT ARM & SWORD
+            // LEFT ARM & SWORD (Gripped mathematically at the handle origin)
             float swRot = (slashT > 0) ? -2.5f * sin(slashT * 3.14f) : -sin(wt*4.0f)*0.2f;
             Mat4 mLArm = tBase.mul(Mat4::trans(0.38f, 0.6f, 0)).mul(Mat4::rotX(swRot));
             glUniformMatrix4fv(lm,1,GL_FALSE,mLArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+            
             Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX((slashT > 0) ? -0.5f : 0.0f)); 
             glUniformMatrix4fv(lm,1,GL_FALSE,mLFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-            // Sword attaches precisely at the hand grip
-            Mat4 mSword = mLFore.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX(1.57f));
+            Mat4 mSword = mLFore.mul(Mat4::trans(0, -0.35f, 0));
             glUniformMatrix4fv(lm,1,GL_FALSE,mSword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
 
             // LEGS
