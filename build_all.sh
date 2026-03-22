@@ -1,24 +1,25 @@
 #!/bin/bash
 # File: build_all.sh
 
-# 1. Clean up old build artifacts
+# 1. Prepare asset directories
 rm -rf app/src/main/assets/models
 mkdir -p app/src/main/assets/models
+mkdir -p runtime/python
+mkdir -p scripts
 
-# 2. Setup project structure and Android files
+# 2. Run Project Setup (Generates Gradle/Java/XML)
 chmod +x scripts/setup_project.sh
 ./scripts/setup_project.sh
 
-# 3. Generate Realistic Character Models
-# This calls the Blender script for the 5-finger character and sword
+# 3. Generate Realistic Models (Character & Environment)
+# Uses Blender to bake anatomy and nature assets
 blender --background --python runtime/build_models.py
-
-# 4. Generate High-Resolution Environment Assets
-# This utilizes the realistic assets script for trees/grass
 blender --background --python runtime/python/generate_realistic_assets.py
 
-# 5. Generate the C++ Engine Code
+# 4. Generate C++ Engine
 chmod +x runtime/generate_engine.sh
 ./runtime/generate_engine.sh
 
-echo "Build Pipeline Complete. You can now run ./gradlew :app:assembleDebug"
+echo "--------------------------------------------------------"
+echo "Build environment prepared. You can now run gradlew."
+echo "--------------------------------------------------------"
