@@ -1,69 +1,84 @@
 import bpy
-import bmesh
 from math import radians
 
 def clean():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
 
-def export_voxel_model(name, r, g, b, build_func):
+def create_realistic_humanoid():
     clean()
-    build_func()
     
-    # Pixel Art Style: Hard Edges
-    for obj in bpy.context.scene.objects:
-        if obj.type == 'MESH':
-            for poly in obj.data.polygons: poly.use_smooth = False
-
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
-    bpy.ops.object.join()
-    obj = bpy.context.object
-    bpy.ops.object.modifier_add(type='TRIANGULATE')
-    bpy.ops.object.modifier_apply(modifier=obj.modifiers[-1].name)
+    # Create the base mesh
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 1))
+    body = bpy.context.active_object
+    body.name = "PlayerCharacter"
     
-    verts = []
-    mesh = obj.data
-    min_z = min((v.co.z for v in mesh.vertices), default=0)
-    height = max((v.co.z for v in mesh.vertices), default=1) - min_z
-    mesh.calc_loop_triangles()
+    # Subdivide for realistic anatomy curves (replacing blocky voxel style)
+    bpy.ops.object.modifier_add(type='SUBSURF')
+    body.modifiers["Subdivision"].levels = 2
+    
+    # Build a complex, realistic rig
+    bpy.ops.object.armature_add(location=(0, 0, 0))
+    armature = bpy.context.active_object
+    armature.name = "PlayerRig"
+    bpy.ops.object.mode_set(mode='EDIT')
+    
+    # Detailed bone structure including 5 fingers
+    bones = [
+        ("Root", None, (0,0,0), (0,0,0.8)),
+        ("Spine", "Root", (0,0,0.8), (0,0,1.4)),
+        ("Neck", "Spine", (0,0,1.4), (0,0,1.6)),
+        ("Head", "Neck", (0,0,1.6), (0,0,1.9)),
+        ("Shoulder.R", "Spine", (0,0,1.3), (-0.2,0,1.3)),
+        ("Arm.Upper.R", "Shoulder.R", (-0.2,0,1.3), (-0.6,0,1.3)),
+        ("Arm.Lower.R", "Arm.Upper.R", (-0.6,0,1.3), (-1.0,0,1.3)),
+        ("Hand.R", "Arm.Lower.R", (-1.0,0,1.3), (-1.1,0,1.3)),
+        ("Thumb.R", "Hand.R", (-1.1,-0.1,1.3), (-1.2,-0.1,1.3)),
+        ("Index.R", "Hand.R", (-1.1, 0.1,1.3), (-1.2, 0.1,1.3)),
+        ("Middle.R", "Hand.R", (-1.1, 0.0,1.3), (-1.2, 0.0,1.3)),
+        ("Ring.R", "Hand.R", (-1.1, -0.05,1.3), (-1.2, -0.05,1.3)),
+        ("Pinky.R", "Hand.R", (-1.1, -0.15,1.3), (-1.2, -0.15,1.3))
+    ]
+    
+    eb = armature.data.edit_bones
+    for name, parent, head, tail in bones:
+        bone = eb.new(name)
+        bone.head = head
+        bone.tail = tail
+        if parent:
+            bone.parent = eb[parent]
+            
+    bpy.ops.object.mode_set(mode='OBJECT')
+    
+    # Parent mesh to armature with automatic weights
+    body.select_set(True)
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.parent_set(type='ARMATURE_AUTO')
+    
+    # Animate realistic sword swing
+    bpy.ops.object.mode_set(mode='POSE')
+    pb = armature.pose.bones
+    
+    action = bpy.data.actions.new(name="SwordSwing")
+    armature.animation_data_create()
+    armature.animation_data.action = action
+    
+    # Frame 1: Wind up
+    pb["Arm.Upper.R"].rotation_mode = 'QUATERNION'
+    pb["Arm.Upper.R"].rotation_quaternion = (1, 0, 0, 0)
+    armature.keyframe_insert(data_path="pose.bones[\"Arm.Upper.R\"].rotation_quaternion", frame=1)
+    
+    # Frame 15: Strike
+    pb["Arm.Upper.R"].rotation_quaternion = (0.707, 0, 0.707, 0)
+    armature.keyframe_insert(data_path="pose.bones[\"Arm.Upper.R\"].rotation_quaternion", frame=15)
+    
+    # Frame 30: Follow through
+    pb["Arm.Upper.R"].rotation_quaternion = (0.5, 0, 0.866, 0)
+    armature.keyframe_insert(data_path="pose.bones[\"Arm.Upper.R\"].rotation_quaternion", frame=30)
+    
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.wm.obj_export(filepath="app/src/main/assets/models/player.obj")
 
-    for tri in mesh.loop_triangles:
-        # Baked lighting based on face normals
-        lum = 0.5 + (tri.normal.z * 0.4) + (tri.normal.x * 0.1)
-        for loop_idx in tri.loops:
-            v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
-            # OpenGL Coordinate Swap
-            verts.extend([v.co.x, v.co.z, -v.co.y])
-            # Fake Ambient Occlusion: Darker at the bottom
-            ao = 0.4 + (0.6 * ((v.co.z - min_z) / height)) if height > 0 else 1.0
-            verts.extend([r*lum*ao, g*lum*ao, b*lum*ao])
-    return verts
-
-# Voxel Assets
-def build_armoured_knight():
-    bpy.ops.mesh.primitive_cube_add(size=0.6, location=(0,0,0.7)) # Torso
-    bpy.ops.mesh.primitive_cube_add(size=0.45, location=(0,0,1.3)) # Helm
-    bpy.ops.mesh.primitive_cube_add(size=0.2, location=(0.4,0,0.9)) # Pad L
-    bpy.ops.mesh.primitive_cube_add(size=0.2, location=(-0.4,0,0.9)) # Pad R
-
-def build_pixel_sword():
-    bpy.ops.mesh.primitive_cube_add(size=0.1, location=(0.4,0.4,0.8)) # Hilt
-    bpy.ops.mesh.primitive_cube_add(size=0.3, location=(0.4,0.4,1.0)) # Guard
-    bpy.ops.mesh.primitive_cube_add(size=0.15, location=(0.4,0.4,1.4)) # Blade
-    bpy.context.object.scale = (0.5, 0.2, 4.0)
-
-def build_voxel_tree():
-    bpy.ops.mesh.primitive_cube_add(size=0.3, location=(0,0,0.5)) # Trunk
-    bpy.context.object.scale = (1,1,3)
-    bpy.ops.mesh.primitive_cube_add(size=1.2, location=(0,0,1.8)) # Foliage 1
-    bpy.ops.mesh.primitive_cube_add(size=0.8, location=(0,0,2.5)) # Foliage 2
-
-models = [("HERO", 0.7,0.7,0.8, build_armoured_knight), ("SWORD", 0.5,0.8,1.0, build_pixel_sword),
-          ("TREE", 0.1,0.5,0.1, build_voxel_tree)]
-
-with open("app/src/main/cpp/GeneratedModels.h", "w") as f:
-    f.write("#pragma once\n")
-    for n, r, g, b, func in models:
-        d = export_voxel_model(n, r, g, b, func)
-        f.write(f"const float M_{n}[] = {{ {', '.join(map(str, d))} }};\nconst int N_{n} = {len(d)//6};\n")
+if __name__ == "__main__":
+    create_realistic_humanoid()
