@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# Purpose: Exact Kinematic Mapping, Fixed Atan2 Rotation, Perfect Item Binding
+# Purpose: Non-deforming kinematic mapping, procedural high-res texturing.
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -25,189 +25,167 @@ struct Mat4 {
     }
     Mat4 mul(const Mat4& b) const {
         Mat4 r; for(int i=0; i<4; i++) for(int j=0; j<4; j++) for(int k=0; k<4; k++) 
-            r.m[i*4+j] += m[k*4+j]*b.m[i*4+k]; return r;
+            r.m[i*4+j] += m[k*4+j]*b.m[i*4+k];
+        return r;
     }
     static Mat4 trans(float x, float y, float z) { Mat4 r=identity(); r.m[12]=x; r.m[13]=y; r.m[14]=z; return r; }
     static Mat4 rotY(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[2]=-sin(a); r.m[8]=sin(a); r.m[10]=cos(a); return r; }
     static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
     static Mat4 rotZ(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[1]=sin(a); r.m[4]=-sin(a); r.m[5]=cos(a); return r; }
+    static Mat4 scale(float x, float y, float z) { Mat4 r=identity(); r.m[0]=x; r.m[5]=y; r.m[10]=z; return r; }
 };
 
-float getTerrainHeight(float x, float z) {
-    return sin(x * 0.4f) * cos(z * 0.4f) * 1.5f;
-}
+float getTerrainHeight(float x, float z) { return sin(x * 0.4f) * cos(z * 0.4f) * 1.5f; }
 
-GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoChest, vaoCloud, vaoTerrain;
+GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoTerrain;
 float px=0, py=0, pz=0, pf=0, wt=0, st=0;
-float vy = 0.0f;
-bool isGrounded = true;
-int comboState = 0; 
-volatile bool block=false;
-volatile bool shieldBash=false;
-Mat4 proj;
-auto lastTime = std::chrono::steady_clock::now();
+bool block=false;
 
 GLuint createVAO(const float* d, int n) {
     GLuint vao, vbo; glGenVertexArrays(1,&vao); glGenBuffers(1,&vbo);
-    glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER,vbo); glBufferData(GL_ARRAY_BUFFER, n*24, d, GL_STATIC_DRAW);
-    glVertexAttribPointer(0,3,GL_FLOAT,0,24,0); glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1,3,GL_FLOAT,0,24,(void*)12); glEnableVertexAttribArray(1);
+    glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER,vbo); 
+    // Format: X, Y, Z, R, G, B, U, V (8 floats * 4 bytes = 32 stride)
+    glBufferData(GL_ARRAY_BUFFER, n*32, d, GL_STATIC_DRAW);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,32,0); glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,32,(void*)12); glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2,2,GL_FLOAT,GL_FALSE,32,(void*)24); glEnableVertexAttribArray(2);
     return vao;
 }
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
-        const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m,v,pr; uniform float isT; out vec3 vc; out vec4 viewPos; void main(){ vec4 w=m*vec4(p,1.0); if(isT>0.5) w.y += sin(w.x*0.4)*cos(w.z*0.4)*1.5; viewPos=v*w; gl_Position=pr*viewPos; vc=c; }";
-        const char* fS = "#version 300 es\nprecision mediump float; in vec3 vc; in vec4 viewPos; out vec4 o; void main(){ float dist=length(viewPos.xyz); float fog=clamp((dist-20.0)/80.0, 0.0, 1.0); vec3 sky=vec3(0.5,0.7,0.9); o=vec4(mix(vc,sky,fog), 1.0); }";
+        const char* vS = "#version 300 es\n"
+            "layout(location=0) in vec3 p; layout(location=1) in vec3 c; layout(location=2) in vec2 uv;\n"
+            "uniform mat4 m,v,pr; uniform float isT;\n"
+            "out vec3 vc; out vec2 vuv; out vec4 wPos;\n"
+            "void main(){\n"
+            "  vec4 w=m*vec4(p,1.0);\n"
+            "  if(isT>0.5) w.y += sin(w.x*0.4)*cos(w.z*0.4)*1.5;\n"
+            "  wPos = w;\n"
+            "  gl_Position=pr*v*w; vc=c; vuv=uv;\n"
+            "}";
         
-        GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
-        GLuint fs=glCreateShader(GL_FRAGMENT_SHADER); glShaderSource(fs,1,&fS,0); glCompileShader(fs);
-        prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog); glUseProgram(prog);
-        glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE);
-        
-        vaoTorso=createVAO(M_TORSO, N_TORSO); vaoHead=createVAO(M_HEAD, N_HEAD);
-        vaoUpLimb=createVAO(M_UP_LIMB, N_UP_LIMB); vaoLowLimb=createVAO(M_LOW_LIMB, N_LOW_LIMB);
-        vaoSword=createVAO(M_SWORD, N_SWORD); vaoShield=createVAO(M_SHIELD, N_SHIELD);
-        vaoTree=createVAO(M_TREE, N_TREE); vaoChest=createVAO(M_CHEST, N_CHEST);
-        vaoCloud=createVAO(M_CLOUD, N_CLOUD); vaoTerrain=createVAO(M_TERRAIN, N_TERRAIN);
+        // High-Resolution Procedural Texture Shader
+        const char* fS = "#version 300 es\n"
+            "precision mediump float;\n"
+            "in vec3 vc; in vec2 vuv; in vec4 wPos;\n"
+            "uniform float isT;\n"
+            "out vec4 o;\n"
+            "float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }\n"
+            "float noise(vec2 p) {\n"
+            "  vec2 i = floor(p); vec2 f = fract(p);\n"
+            "  vec2 u = f*f*(3.0-2.0*f);\n"
+            "  return mix(mix(hash(i+vec2(0.0,0.0)), hash(i+vec2(1.0,0.0)), u.x),\n"
+            "             mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), u.x), u.y);\n"
+            "}\n"
+            "void main(){\n"
+            "  vec3 col = vc;\n"
+            "  if(isT>0.5) {\n"
+            "    // Real Grass and Mud Generation\n"
+            "    float n = noise(wPos.xz * 15.0) * 0.5 + noise(wPos.xz * 30.0) * 0.25;\n"
+            "    float mudMap = noise(wPos.xz * 2.0);\n"
+            "    vec3 grassCol = mix(vec3(0.1, 0.4, 0.1), vec3(0.3, 0.6, 0.2), n);\n"
+            "    vec3 mudCol = mix(vec3(0.3, 0.2, 0.1), vec3(0.4, 0.3, 0.2), n);\n"
+            "    col = mix(grassCol, mudCol, smoothstep(0.4, 0.6, mudMap)) * vc;\n"
+            "  }\n"
+            "  o = vec4(col, 1.0);\n"
+            "}";
+
+        GLuint vs=glCreateShader(GL_VERTEX_SHADER), fs=glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(vs,1,&vS,0); glCompileShader(vs);
+        glShaderSource(fs,1,&fS,0); glCompileShader(fs);
+        prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog);
+
+        vaoTorso = createVAO(M_TORSO, N_TORSO);
+        vaoHead = createVAO(M_HEAD, N_HEAD);
+        vaoUpLimb = createVAO(M_UP_LIMB, N_UP_LIMB);
+        vaoLowLimb = createVAO(M_LOW_LIMB, N_LOW_LIMB);
+        vaoSword = createVAO(M_SWORD, N_SWORD);
+        vaoShield = createVAO(M_SHIELD, N_SHIELD);
+        vaoTree = createVAO(M_TREE, N_TREE);
+        vaoTerrain = createVAO(M_TERRAIN, N_TERRAIN);
+        glClearColor(0.5f, 0.7f, 0.9f, 1.0f);
+        glEnable(GL_DEPTH_TEST);
     }
-    
+
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
-        glViewport(0,0,w,h); proj=Mat4::perspective(1.0f, (float)w/h, 0.1f, 300.0f);
+        glViewport(0,0,w,h); proj = Mat4::perspective(1.0f, (float)w/h, 0.1f, 100.0f);
     }
-    
+
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat yaw, jfloat pitch, jfloat zoom) {
-        auto currentTime = std::chrono::steady_clock::now();
-        float dt = std::chrono::duration<float>(currentTime - lastTime).count();
-        lastTime = currentTime;
-        static float globalTime = 0; globalTime += dt;
-
-        float speed = 0.0f;
-        if(fabs(ix)>0.05f || fabs(iy)>0.05f) {
-            float s=sin(yaw), c=cos(yaw);
-            float dx = ix*c - (-iy)*s; 
-            float dz = ix*s + (-iy)*c;
-            px += dx * 6.0f * dt; 
-            pz -= dz * 6.0f * dt; 
-            
-            // ROTATION FIX: Right-Handed coordinates. 
-            // -dz is true forward motion. atan2(dx, -dz) forces player mesh to exactly face movement vector.
-            pf = atan2(dx, -dz); 
-            wt += 15.0f * dt; speed = 1.0f;
-        } else { wt = 0; }
-
-        float groundY = getTerrainHeight(px, pz);
-        py += vy * dt;
-        vy -= 25.0f * dt; // Stronger Gravity
+        if(fabs(ix)>0.0f || fabs(iy)>0.0f) {
+            float s=sin(yaw), c=cos(yaw), dx=ix*c-(-iy)*s, dz=ix*s+(-iy)*c;
+            px+=dx*0.1f; pz-=dz*0.1f; pf=atan2(-dx,dz); wt+=0.15f;
+        } else { wt=0; }
         
-        if (py <= groundY) {
-            py = groundY;
-            vy = 0.0f;
-            isGrounded = true;
-        }
+        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glUseProgram(prog);
+        glUniformMatrix4fv(glGetUniformLocation(prog,"pr"),1,0,proj.m);
+        
+        Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1,-pz));
+        glUniformMatrix4fv(glGetUniformLocation(prog,"v"),1,0,v.m);
+        GLint lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"isT");
 
-        if(comboState > 0 || shieldBash) { 
-            st += 14.0f * dt; // Faster combat animations
-            if(st > 3.14f) { comboState = 0; shieldBash = false; st = 0; } 
-        }
-
-        glClearColor(0.5f, 0.7f, 0.9f, 1.0f); 
-        glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); 
-        GLint lp=glGetUniformLocation(prog,"pr"), lv=glGetUniformLocation(prog,"v"), lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"isT");
-        glUniformMatrix4fv(lp,1,0,proj.m);
-        
-        float hipHeight = py + 0.8f + (sin(wt*2.0f)*0.05f * speed);
-        Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-(hipHeight+0.5f),-pz));
-        glUniformMatrix4fv(lv,1,0,v.m);
-        
-        glUniform1f(lt, 1.0f); 
-        for(int i=-6; i<=6; i++) for(int j=-6; j<=6; j++) {
-            float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
-            Mat4 tm=Mat4::trans(tx,0,tz); glUniformMatrix4fv(lm,1,0,tm.m);
-            glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
-        }
-        
-        glUniform1f(lt, 0.0f); 
+        // TERRAIN
+        glUniform1f(lt, 1.0f);
         for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
-            float seed = fmod(tx*1.2f+tz*0.8f, 6.f);
-            if(seed > 4.8f) {
-                Mat4 tm=Mat4::trans(tx,getTerrainHeight(tx, tz),tz); glUniformMatrix4fv(lm,1,0,tm.m);
-                glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES,0,N_TREE);
-            } else if (seed > 4.5f && seed < 4.6f) {
-                Mat4 cm=Mat4::trans(tx,getTerrainHeight(tx, tz),tz); glUniformMatrix4fv(lm,1,0,cm.m);
-                glBindVertexArray(vaoChest); glDrawArrays(GL_TRIANGLES,0,N_CHEST);
+            Mat4 tm=Mat4::trans(tx,0,tz);
+            glUniformMatrix4fv(lm,1,0,tm.m); glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
+        }
+        
+        // TREES
+        glUniform1f(lt, 0.0f);
+        for(int i=-2; i<=2; i++) for(int j=-2; j<=2; j++) {
+            float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
+            if(fmod(tx*1.2f+tz*0.8f, 6.f) > 4.5f) {
+                Mat4 tm=Mat4::trans(tx,getTerrainHeight(tx,tz),tz);
+                glUniformMatrix4fv(lm,1,0,tm.m); glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES,0,N_TREE);
             }
         }
-        
-        glBindVertexArray(vaoCloud);
-        for(int c=0; c<12; c++) {
-            float cx = fmod(c * 40.0f + globalTime * 1.5f, 250.0f) - 125.0f + px;
-            float cz = (c * 20.0f) - 80.0f + pz;
-            Mat4 clm = Mat4::trans(cx, 50.0f, cz); glUniformMatrix4fv(lm,1,0,clm.m);
-            glDrawArrays(GL_TRIANGLES,0,N_CLOUD);
-        }
-        
-        // --- HIERARCHICAL KINEMATIC BINDINGS ---
-        Mat4 root = Mat4::trans(px, hipHeight, pz).mul(Mat4::rotY(pf));
-        
-        glUniformMatrix4fv(lm,1,0,root.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
-        Mat4 head = root.mul(Mat4::trans(0,0.7f,0));
-        glUniformMatrix4fv(lm,1,0,head.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-        float swingL = isGrounded ? sin(wt) * 0.8f * speed : 0.3f; 
-        float swingR = isGrounded ? sin(wt + 3.1415f) * 0.8f * speed : -0.3f;
-        
-        Mat4 hipL = root.mul(Mat4::trans(0.18f,0,0)).mul(Mat4::rotX(swingL));
-        glUniformMatrix4fv(lm,1,0,hipL.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
-        Mat4 kneeL = hipL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingL > 0 ? swingL : 0));
-        glUniformMatrix4fv(lm,1,0,kneeL.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
-        
-        Mat4 hipR = root.mul(Mat4::trans(-0.18f,0,0)).mul(Mat4::rotX(swingR));
-        glUniformMatrix4fv(lm,1,0,hipR.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
-        Mat4 kneeR = hipR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingR > 0 ? swingR : 0));
-        glUniformMatrix4fv(lm,1,0,kneeR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+        // PLAYER RENDER (Matrix separation fixes deformation)
+        float th = getTerrainHeight(px,pz);
+        Mat4 tBase = Mat4::trans(px, th+1.0f, pz).mul(Mat4::rotY(pf));
 
-        // SHIELD ARM DYNAMICS
-        float armL = -swingL * 0.6f; float armR = -swingR * 0.6f;
-        Mat4 shL = root.mul(Mat4::trans(-0.35f,0.5f,0));
-        
-        // Shield Block orientation: Arm points straight out (-1.57 X rotation)
-        if(shieldBash) shL = shL.mul(Mat4::rotY(-0.5f)).mul(Mat4::rotX(-1.57f)).mul(Mat4::trans(0,0,sin(st)*0.6f));
-        else if (block) shL = shL.mul(Mat4::rotX(-1.57f)).mul(Mat4::rotY(0.4f)); 
-        else shL = shL.mul(Mat4::rotX(armL)); 
-        
-        Mat4 elbL = shL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX((block || shieldBash) ? 0.0f : -0.2f));
-        
-        // SWORD ARM DYNAMICS
-        Mat4 shR = root.mul(Mat4::trans(0.35f,0.5f,0));
-        if(comboState == 1) shR = shR.mul(Mat4::rotY(-sin(st)*2.5f)).mul(Mat4::rotX(-1.57f));
-        else if(comboState == 2) shR = shR.mul(Mat4::rotY(sin(st)*2.5f)).mul(Mat4::rotX(-1.57f));
-        else if(comboState == 3) shR = shR.mul(Mat4::rotX(-sin(st)*3.14f));
-        else shR = shR.mul(Mat4::rotX(armR));
-        
-        Mat4 elbR = shR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(-0.2f));
+        // Torso
+        glUniformMatrix4fv(lm,1,0,tBase.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
+        // Head
+        Mat4 mHead = tBase.mul(Mat4::trans(0,0.85f,0));
+        glUniformMatrix4fv(lm,1,0,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-        glUniformMatrix4fv(lm,1,0,shL.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
-        glUniformMatrix4fv(lm,1,0,elbL.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
-        glUniformMatrix4fv(lm,1,0,shR.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
-        glUniformMatrix4fv(lm,1,0,elbR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+        // Right Arm (Shield)
+        float sArmRot = block ? -1.5f : sin(wt)*0.5f;
+        Mat4 mRArmNode = tBase.mul(Mat4::trans(-0.35f, 0.6f, 0)).mul(Mat4::rotX(sArmRot));
+        glUniformMatrix4fv(lm,1,0,mRArmNode.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         
-        // SHIELD FIX: Bound specifically to left hand, facing outwards away from the body
-        Mat4 shield = elbL.mul(Mat4::trans(-0.15f,-0.4f,0.0f)).mul(Mat4::rotX(1.57f));
-        glUniformMatrix4fv(lm,1,0,shield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
+        Mat4 mRForeArm = mRArmNode.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,0,mRForeArm.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
         
-        // SWORD FIX: Bound perfectly inside the right hand "cube"
-        Mat4 sword = elbR.mul(Mat4::trans(0.0f,-0.4f,0.1f)).mul(Mat4::rotX(1.57f));
-        glUniformMatrix4fv(lm,1,0,sword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
+        // SHIELD FIX: Apply explicit rotation at the wrist so it stands vertically, independent of scaling!
+        Mat4 mShield = mRForeArm.mul(Mat4::trans(0, -0.48f, 0)).mul(Mat4::rotX(1.57f));
+        glUniformMatrix4fv(lm,1,0,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
+
+        // Left Arm
+        Mat4 mLArmNode = tBase.mul(Mat4::trans(0.35f, 0.6f, 0)).mul(Mat4::rotX(-sin(wt)*0.5f));
+        glUniformMatrix4fv(lm,1,0,mLArmNode.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        Mat4 mLForeArm = mLArmNode.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,0,mLForeArm.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+
+        // Legs
+        Mat4 mRLeg = tBase.mul(Mat4::trans(-0.15f, 0.0f, 0)).mul(Mat4::rotX(-sin(wt)*0.8f));
+        glUniformMatrix4fv(lm,1,0,mRLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        Mat4 mRLegLow = mRLeg.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,0,mRLegLow.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+
+        Mat4 mLLeg = tBase.mul(Mat4::trans(0.15f, 0.0f, 0)).mul(Mat4::rotX(sin(wt)*0.8f));
+        glUniformMatrix4fv(lm,1,0,mLLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        Mat4 mLLegLow = mLLeg.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,0,mLLegLow.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
     }
-    
+
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1) { if(comboState == 0 || st > 2.0f) { comboState++; if(comboState > 3) comboState = 1; st = 0; } } 
-        else if(id==2) block=true; 
-        else if(id==3) block=false;
-        else if(id==4) { if(isGrounded) { vy = 11.0f; isGrounded = false; } } 
-        else if(id==6) { shieldBash = true; st = 0; } 
+        if(id==2) block=true; else block=false;
     }
 }
 EOF
