@@ -6,7 +6,7 @@ mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp
 
-# 2. Generate Gradle Build Files
+# 2. Generate Gradle Build Files (Modern Gradle 9+ Syntax)
 cat << 'EOF' > settings.gradle
 pluginManagement {
     repositories {
@@ -27,15 +27,9 @@ include ':app'
 EOF
 
 cat << 'EOF' > build.gradle
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        // Defines the Android Gradle Plugin version
-        classpath 'com.android.tools.build:gradle:8.1.0' 
-    }
+// Modern Plugins block replaces the deprecated 'buildscript' classpath
+plugins {
+    id 'com.android.application' version '8.3.0' apply false
 }
 EOF
 
@@ -81,10 +75,8 @@ cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
 project("procedural_engine")
 
-# Add your dynamically generated C++ engine file
 add_library(procedural_engine SHARED engine.cpp)
 
-# Link to Android's native OpenGL ES 3, EGL, and logging libraries
 find_library(log-lib log)
 find_library(GLES3-lib GLESv3)
 find_library(EGL-lib EGL)
@@ -181,6 +173,16 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
             android:layout_marginBottom="32dp"
             android:layout_marginRight="16dp"
             android:text="Jump" />
+            
+        <Button
+            android:id="@+id/btn_action"
+            android:layout_width="80dp"
+            android:layout_height="80dp"
+            android:layout_above="@id/btn_jump"
+            android:layout_toLeftOf="@id/btn_shield"
+            android:layout_marginBottom="16dp"
+            android:layout_marginRight="16dp"
+            android:text="Action" />
 
         <ImageView
             android:id="@+id/joystick_bg"
@@ -200,6 +202,53 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
             android:background="#88FFFFFF" />
             
     </RelativeLayout>
+
+    <LinearLayout
+        android:id="@+id/menu_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:background="#AA000000"
+        android:padding="20dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/left_menu"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:layout_marginRight="20dp">
+            
+            <Button
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:text="Status"
+                android:textColor="#AAA"
+                android:layout_marginBottom="10dp"/>
+            <Button
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:text="Chest"
+                android:textColor="#AAA"
+                android:layout_marginBottom="10dp"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="match_parent"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="INVENTORY"
+                android:textColor="#FFF"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:layout_marginBottom="10dp"/>
+        </LinearLayout>
+    </LinearLayout>
+
 </RelativeLayout>
 EOF
 
@@ -211,6 +260,7 @@ import android.app.Activity;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -228,9 +278,17 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private native float getCameraYaw(); 
 
     private GLSurfaceView glView;
+    private View menuOverlay;
+    private View gameUi;
+    
     private ImageView knob;
     private float tX = 0f, tY = 0f;
     private long shieldDownTime = 0;
+    
+    private ScaleGestureDetector scaleDetector;
+    private float camZoom = 15.0f;
+    private float camYaw = 0.0f;
+    private float lastTouchX, lastTouchY;
     
     private ImageView compassView;
     private Button compassToggleBtn;
@@ -245,7 +303,10 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         glView.setEGLContextClientVersion(3);
         glView.setRenderer(this);
 
+        menuOverlay = findViewById(R.id.menu_overlay);
+        gameUi = findViewById(R.id.game_ui);
         knob = findViewById(R.id.joystick_knob);
+        
         compassView = findViewById(R.id.img_compass);
         compassToggleBtn = findViewById(R.id.btn_compass_toggle);
         
@@ -257,6 +318,30 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
             } else {
                 compassToggleBtn.setText("Lock");
             }
+        });
+
+        scaleDetector = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            @Override
+            public boolean onScale(ScaleGestureDetector d) {
+                camZoom /= d.getScaleFactor();
+                camZoom = Math.max(4.0f, Math.min(30.0f, camZoom));
+                return true;
+            }
+        });
+
+        glView.setOnTouchListener((v, e) -> {
+            scaleDetector.onTouchEvent(e);
+            if (!scaleDetector.isInProgress() && e.getPointerCount() == 1 && e.getX() > v.getWidth()/2f) {
+                if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                    lastTouchX = e.getX();
+                    lastTouchY = e.getY();
+                } else if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                    camYaw += (e.getX() - lastTouchX) * 0.01f;
+                    lastTouchX = e.getX();
+                    lastTouchY = e.getY();
+                }
+            }
+            return true;
         });
 
         findViewById(R.id.joystick_bg).setOnTouchListener((v, e) -> {
@@ -277,6 +362,16 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         
         findViewById(R.id.btn_sword).setOnClickListener(v -> triggerAction(1));
         findViewById(R.id.btn_jump).setOnClickListener(v -> triggerAction(4));
+        
+        findViewById(R.id.btn_action).setOnClickListener(v -> {
+            if (menuOverlay.getVisibility() == View.GONE) {
+                menuOverlay.setVisibility(View.VISIBLE);
+                gameUi.setVisibility(View.GONE);
+            } else {
+                menuOverlay.setVisibility(View.GONE);
+                gameUi.setVisibility(View.VISIBLE);
+            }
+        });
 
         findViewById(R.id.btn_shield).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_DOWN) {
@@ -295,6 +390,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     
     @Override 
     public void onDrawFrame(GL10 gl) { 
+        if (menuOverlay.getVisibility() == View.VISIBLE) return;
+        
         onDraw(); 
         if (!isCompassLocked) {
             float currentYaw = getCameraYaw();
