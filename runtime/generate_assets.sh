@@ -1,10 +1,11 @@
 #!/bin/bash
 # File: runtime/generate_assets.sh
-# Purpose: Modular, mathematically robust asset generation fixing zero-geometry export failures.
+# Purpose: Modular, mathematically robust asset generation for the Voxel RPG.
 
 mkdir -p runtime/python
 mkdir -p app/src/main/cpp/models
 
+# MODULE 1: The Exporter (Bulletproof headless exporting)
 cat << 'EOF' > runtime/python/exporter.py
 import bpy, bmesh
 
@@ -16,30 +17,28 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     clean()
     build_func()
     
-    # 1. Enforce Hard-Edge Voxel Aesthetics
+    # Force Hard-Edge Voxel Aesthetics
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH':
-            for poly in obj.data.polygons: poly.use_smooth = False
+            for poly in obj.data.polygons: 
+                poly.use_smooth = False
             
-    # 2. Safely Apply All Transformations to Prevent Engine Deformation
+    # Safely select and join
     bpy.ops.object.select_all(action='SELECT')
-    for obj in bpy.context.selected_objects:
-        bpy.context.view_layer.objects.active = obj
-        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-            
-    # 3. Join Geometry Safely
-    bpy.ops.object.select_all(action='SELECT')
-    if not bpy.context.selected_objects:
-        print(f"ERROR: {name} geometry failed to generate.")
+    objs = bpy.context.selected_objects
+    if not objs:
+        print(f"Error: {name} is empty.")
         return
         
-    bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
+    bpy.context.view_layer.objects.active = objs[0]
     bpy.ops.object.join()
+    
+    # Apply all transforms so OpenGL scales don't deform animations!
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     
     obj = bpy.context.object
     mesh = obj.data
     
-    # 4. Robust Triangulation
     bm = bmesh.new()
     bm.from_mesh(mesh)
     bmesh.ops.triangulate(bm, faces=bm.faces)
@@ -47,40 +46,52 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     bm.free()
     
     verts = []
-    min_z = min((v.co.z for v in mesh.vertices), default=0)
-    height = max((v.co.z for v in mesh.vertices), default=1) - min_z
     mesh.calc_loop_triangles()
     
-    # 5. Extract Lit Geometry
+    min_z = min((v.co.z for v in mesh.vertices), default=0)
+    height = max((v.co.z for v in mesh.vertices), default=1) - min_z
+    
     for tri in mesh.loop_triangles:
-        lum = 0.6 + (tri.normal.z * 0.4)
+        # Directional sunlight lighting
+        lum = 0.5 + max(0.0, tri.normal.z * 0.5) + max(0.0, tri.normal.x * 0.2)
         for loop_idx in tri.loops:
             v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
-            ao = 0.4 + (0.6 * ((v.co.z - min_z) / height)) if height > 0 else 1.0
+            ao = 0.5 + (0.5 * ((v.co.z - min_z) / height)) if height > 0 else 1.0
+            
+            # X, Y, Z, R, G, B, U, V
             verts.extend([v.co.x, v.co.z, -v.co.y, r*lum*ao, g*lum*ao, b*lum*ao, v.co.x*0.5, v.co.y*0.5])
             
     with open(outfile, "a") as f:
         f.write(f"const float M_{name}[] = {{ {', '.join(map(str, verts))} }};\n")
         f.write(f"const int N_{name} = {len(verts)//8};\n")
-    print(f"SUCCESS: Exported {name} with {len(verts)//8} vertices.")
 EOF
 
+# MODULE 2: The Character Builder (Fixed anatomy, no floating parts)
 cat << 'EOF' > runtime/python/builder_char.py
 import bpy
 
 def build_body():
+    # Torso
     bpy.ops.mesh.primitive_cube_add(scale=(0.3, 0.2, 0.4), location=(0,0,0.4)) 
+    # Neck 
     bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.1, 0.1), location=(0,0,0.85)) 
+    # Left Shoulder
     bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.15), location=(0.35,0,0.65)) 
+    # Right Shoulder
     bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.15), location=(-0.35,0,0.65)) 
 
-def build_head(): bpy.ops.mesh.primitive_cube_add(scale=(0.22, 0.22, 0.22), location=(0,0,0.1))
-def build_up_limb(): bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.1, 0.25), location=(0,0,-0.25))
+def build_head(): 
+    bpy.ops.mesh.primitive_cube_add(scale=(0.22, 0.22, 0.22), location=(0,0,0.1))
+
+def build_up_limb(): 
+    bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.1, 0.25), location=(0,0,-0.25))
+
 def build_low_limb():
     bpy.ops.mesh.primitive_cube_add(scale=(0.08, 0.08, 0.25), location=(0,0,-0.25))
     bpy.ops.mesh.primitive_cube_add(scale=(0.12, 0.15, 0.12), location=(0,0,-0.5))
 EOF
 
+# MODULE 3: Environment & Weapons Builder
 cat << 'EOF' > runtime/python/builder_env.py
 import bpy, math
 
@@ -93,6 +104,7 @@ def build_shield():
     bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.06), location=(0,0,0.06))
 
 def build_terrain():
+    # 16x16 is memory-safe for Android NDK compilation
     bpy.ops.mesh.primitive_grid_add(size=16, x_subdivisions=16, y_subdivisions=16)
 
 def build_tree():
@@ -109,6 +121,7 @@ def build_tree():
     branch((0,0,1.0), 0, 0, 3, 1.0)
 EOF
 
+# MODULE 4: Main Execution
 cat << 'EOF' > runtime/python/main_bake.py
 import sys
 sys.path.append('runtime/python')
@@ -116,7 +129,8 @@ from exporter import bake_and_export
 from builder_char import *
 from builder_env import *
 
-with open("app/src/main/cpp/models/AllModels.h", "w") as f: f.write("#pragma once\n")
+with open("app/src/main/cpp/models/AllModels.h", "w") as f: 
+    f.write("#pragma once\n")
 
 bake_and_export("TORSO", 0.6, 0.65, 0.7, build_body, "app/src/main/cpp/models/AllModels.h")
 bake_and_export("HEAD", 0.85, 0.7, 0.6, build_head, "app/src/main/cpp/models/AllModels.h")
