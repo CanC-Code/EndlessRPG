@@ -1,5 +1,6 @@
 #!/bin/bash
-echo "Injecting Physics Engine with Jump Gravity and Fixed Rotation..."
+# File: runtime/generate_engine.sh
+# Purpose: Exact Kinematic Mapping, Fixed Atan2 Rotation, Perfect Item Binding
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -38,7 +39,7 @@ float getTerrainHeight(float x, float z) {
 
 GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoChest, vaoCloud, vaoTerrain;
 float px=0, py=0, pz=0, pf=0, wt=0, st=0;
-float vy = 0.0f; // Vertical Velocity
+float vy = 0.0f;
 bool isGrounded = true;
 int comboState = 0; 
 volatile bool block=false;
@@ -84,19 +85,20 @@ extern "C" {
         float speed = 0.0f;
         if(fabs(ix)>0.05f || fabs(iy)>0.05f) {
             float s=sin(yaw), c=cos(yaw);
-            float dx=ix*c - (-iy)*s; 
-            float dz=ix*s + (-iy)*c;
-            px+=dx*6.0f*dt; pz-=dz*6.0f*dt; 
+            float dx = ix*c - (-iy)*s; 
+            float dz = ix*s + (-iy)*c;
+            px += dx * 6.0f * dt; 
+            pz -= dz * 6.0f * dt; 
             
-            // FIXED ROTATION: Atan2 logic aligned with actual movement vector
-            pf=atan2(dx, dz); 
-            wt+=15.0f*dt; speed = 1.0f;
+            // ROTATION FIX: Right-Handed coordinates. 
+            // -dz is true forward motion. atan2(dx, -dz) forces player mesh to exactly face movement vector.
+            pf = atan2(dx, -dz); 
+            wt += 15.0f * dt; speed = 1.0f;
         } else { wt = 0; }
 
-        // JUMP PHYSICS & GRAVITY
         float groundY = getTerrainHeight(px, pz);
         py += vy * dt;
-        vy -= 20.0f * dt; // Gravity
+        vy -= 25.0f * dt; // Stronger Gravity
         
         if (py <= groundY) {
             py = groundY;
@@ -104,9 +106,8 @@ extern "C" {
             isGrounded = true;
         }
 
-        // SWORD/SHIELD ANIMATION PROGRESS
         if(comboState > 0 || shieldBash) { 
-            st += 12.0f * dt; 
+            st += 14.0f * dt; // Faster combat animations
             if(st > 3.14f) { comboState = 0; shieldBash = false; st = 0; } 
         }
 
@@ -119,14 +120,14 @@ extern "C" {
         Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-(hipHeight+0.5f),-pz));
         glUniformMatrix4fv(lv,1,0,v.m);
         
-        glUniform1f(lt, 1.0f); // Terrain pass
+        glUniform1f(lt, 1.0f); 
         for(int i=-6; i<=6; i++) for(int j=-6; j<=6; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
             Mat4 tm=Mat4::trans(tx,0,tz); glUniformMatrix4fv(lm,1,0,tm.m);
             glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
         
-        glUniform1f(lt, 0.0f); // Objects pass
+        glUniform1f(lt, 0.0f); 
         for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
             float seed = fmod(tx*1.2f+tz*0.8f, 6.f);
@@ -139,12 +140,11 @@ extern "C" {
             }
         }
         
-        // Clouds Render Layer
         glBindVertexArray(vaoCloud);
-        for(int c=0; c<10; c++) {
-            float cx = fmod(c * 30.0f + globalTime * 2.0f, 200.0f) - 100.0f + px;
-            float cz = (c * 15.0f) - 50.0f + pz;
-            Mat4 clm = Mat4::trans(cx, 40.0f, cz); glUniformMatrix4fv(lm,1,0,clm.m);
+        for(int c=0; c<12; c++) {
+            float cx = fmod(c * 40.0f + globalTime * 1.5f, 250.0f) - 125.0f + px;
+            float cz = (c * 20.0f) - 80.0f + pz;
+            Mat4 clm = Mat4::trans(cx, 50.0f, cz); glUniformMatrix4fv(lm,1,0,clm.m);
             glDrawArrays(GL_TRIANGLES,0,N_CLOUD);
         }
         
@@ -155,9 +155,8 @@ extern "C" {
         Mat4 head = root.mul(Mat4::trans(0,0.7f,0));
         glUniformMatrix4fv(lm,1,0,head.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-        // Legs (Jump stretches them, walk swings them)
-        float swingL = isGrounded ? sin(wt) * 0.8f * speed : 0.2f; 
-        float swingR = isGrounded ? sin(wt + 3.1415f) * 0.8f * speed : -0.2f;
+        float swingL = isGrounded ? sin(wt) * 0.8f * speed : 0.3f; 
+        float swingR = isGrounded ? sin(wt + 3.1415f) * 0.8f * speed : -0.3f;
         
         Mat4 hipL = root.mul(Mat4::trans(0.18f,0,0)).mul(Mat4::rotX(swingL));
         glUniformMatrix4fv(lm,1,0,hipL.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
@@ -169,22 +168,24 @@ extern "C" {
         Mat4 kneeR = hipR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingR > 0 ? swingR : 0));
         glUniformMatrix4fv(lm,1,0,kneeR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        // Arms & Combat
+        // SHIELD ARM DYNAMICS
         float armL = -swingL * 0.6f; float armR = -swingR * 0.6f;
         Mat4 shL = root.mul(Mat4::trans(-0.35f,0.5f,0));
         
-        if(shieldBash) shL = shL.mul(Mat4::rotX(-1.5f)).mul(Mat4::trans(0,0,sin(st)*0.5f)); // Thrust forward
-        else if (block) shL = shL.mul(Mat4::rotX(-1.5f)); // Hold block
-        else shL = shL.mul(Mat4::rotX(armL)); // Regular swing
+        // Shield Block orientation: Arm points straight out (-1.57 X rotation)
+        if(shieldBash) shL = shL.mul(Mat4::rotY(-0.5f)).mul(Mat4::rotX(-1.57f)).mul(Mat4::trans(0,0,sin(st)*0.6f));
+        else if (block) shL = shL.mul(Mat4::rotX(-1.57f)).mul(Mat4::rotY(0.4f)); 
+        else shL = shL.mul(Mat4::rotX(armL)); 
         
-        Mat4 elbL = shL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX((block || shieldBash) ? -1.0f : -0.2f));
+        Mat4 elbL = shL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX((block || shieldBash) ? 0.0f : -0.2f));
         
+        // SWORD ARM DYNAMICS
         Mat4 shR = root.mul(Mat4::trans(0.35f,0.5f,0));
-        // FIXED SWORD ARCS: Swings gracefully across the body
-        if(comboState == 1) shR = shR.mul(Mat4::rotY(-sin(st)*2.0f)).mul(Mat4::rotX(-1.5f));
-        else if(comboState == 2) shR = shR.mul(Mat4::rotY(sin(st)*2.0f)).mul(Mat4::rotX(-1.5f));
-        else if(comboState == 3) shR = shR.mul(Mat4::rotX(-sin(st)*3.0f));
+        if(comboState == 1) shR = shR.mul(Mat4::rotY(-sin(st)*2.5f)).mul(Mat4::rotX(-1.57f));
+        else if(comboState == 2) shR = shR.mul(Mat4::rotY(sin(st)*2.5f)).mul(Mat4::rotX(-1.57f));
+        else if(comboState == 3) shR = shR.mul(Mat4::rotX(-sin(st)*3.14f));
         else shR = shR.mul(Mat4::rotX(armR));
+        
         Mat4 elbR = shR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(-0.2f));
 
         glUniformMatrix4fv(lm,1,0,shL.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
@@ -192,11 +193,12 @@ extern "C" {
         glUniformMatrix4fv(lm,1,0,shR.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         glUniformMatrix4fv(lm,1,0,elbR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
         
-        // FIXED SHIELD: Attaches firmly to forearm facing outward
-        Mat4 shield = elbL.mul(Mat4::trans(-0.15f,-0.2f,0.0f)).mul(Mat4::rotZ(1.57f)).mul(Mat4::rotX(1.57f));
+        // SHIELD FIX: Bound specifically to left hand, facing outwards away from the body
+        Mat4 shield = elbL.mul(Mat4::trans(-0.15f,-0.4f,0.0f)).mul(Mat4::rotX(1.57f));
         glUniformMatrix4fv(lm,1,0,shield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
         
-        Mat4 sword = elbR.mul(Mat4::trans(0,-0.4f,0.0f)).mul(Mat4::rotX(1.57f));
+        // SWORD FIX: Bound perfectly inside the right hand "cube"
+        Mat4 sword = elbR.mul(Mat4::trans(0.0f,-0.4f,0.1f)).mul(Mat4::rotX(1.57f));
         glUniformMatrix4fv(lm,1,0,sword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
     }
     
@@ -204,8 +206,8 @@ extern "C" {
         if(id==1) { if(comboState == 0 || st > 2.0f) { comboState++; if(comboState > 3) comboState = 1; st = 0; } } 
         else if(id==2) block=true; 
         else if(id==3) block=false;
-        else if(id==4) { if(isGrounded) { vy = 9.0f; isGrounded = false; } } // JUMP
-        else if(id==6) { shieldBash = true; st = 0; } // SHIELD BASH
+        else if(id==4) { if(isGrounded) { vy = 11.0f; isGrounded = false; } } 
+        else if(id==6) { shieldBash = true; st = 0; } 
     }
 }
 EOF
