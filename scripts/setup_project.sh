@@ -1,6 +1,5 @@
 #!/bin/bash
-# File: scripts/setup_project.sh
-# Purpose: Overhaul Android UI, introducing Health Bar, Inventory GUI, and expanded Camera Pitch limits.
+echo "Scaffolding Android Framework and Advanced GUI..."
 
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -42,8 +41,6 @@ EOF
 cat << 'EOF' > app/src/main/res/drawable/btn_bg.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#66000000"/><stroke android:width="3dp" android:color="#AAFFFFFF"/></shape>
 EOF
-
-# Added health bar styling
 cat << 'EOF' > app/src/main/res/drawable/health_bar_bg.xml
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:id="@android:id/background"><shape><solid android:color="#55000000"/><corners android:radius="8dp"/></shape></item>
@@ -51,7 +48,6 @@ cat << 'EOF' > app/src/main/res/drawable/health_bar_bg.xml
 </layer-list>
 EOF
 
-# Expanded UI Layout with Inventory and Health
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
     <android.opengl.GLSurfaceView android:id="@+id/game_surface" android:layout_width="match_parent" android:layout_height="match_parent" />
@@ -69,10 +65,12 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         <View android:id="@+id/thumbstick_knob" android:layout_width="60dp" android:layout_height="60dp" android:layout_centerInParent="true" android:background="@drawable/stick_knob" />
     </RelativeLayout>
 
-    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp">
-        <Button android:id="@+id/btn_shield" android:layout_width="70dp" android:layout_height="70dp" android:layout_marginRight="20dp" android:layout_gravity="bottom" android:text="🛡️" android:textSize="24sp" android:background="@drawable/btn_bg" />
-        <Button android:id="@+id/btn_sword" android:layout_width="90dp" android:layout_height="90dp" android:text="⚔️" android:textSize="32sp" android:background="@drawable/btn_bg" />
-    </LinearLayout>
+    <GridLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp" android:columnCount="2" android:rowCount="2">
+        <Button android:id="@+id/btn_action" android:layout_width="65dp" android:layout_height="65dp" android:layout_margin="5dp" android:text="🖐" android:textSize="20sp" android:background="@drawable/btn_bg" />
+        <Button android:id="@+id/btn_shield" android:layout_width="65dp" android:layout_height="65dp" android:layout_margin="5dp" android:text="🛡️" android:textSize="20sp" android:background="@drawable/btn_bg" />
+        <Button android:id="@+id/btn_jump" android:layout_width="65dp" android:layout_height="65dp" android:layout_margin="5dp" android:text="⬆️" android:textSize="20sp" android:background="@drawable/btn_bg" />
+        <Button android:id="@+id/btn_sword" android:layout_width="85dp" android:layout_height="85dp" android:layout_margin="5dp" android:text="⚔️" android:textSize="28sp" android:background="@drawable/btn_bg" />
+    </GridLayout>
 
     <LinearLayout android:id="@+id/menu_overlay" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#E6000000" android:gravity="center" android:orientation="vertical" android:visibility="gone">
         <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PAUSED" android:textColor="#FFF" android:textSize="40sp" android:layout_marginBottom="30dp" android:textStyle="bold"/>
@@ -85,22 +83,16 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="EQUIPMENT" android:textColor="#FFF" android:textSize="20sp" android:textStyle="bold" android:layout_marginBottom="20dp"/>
             <Button android:layout_width="80dp" android:layout_height="80dp" android:text="Helm" android:background="@drawable/btn_bg" android:textColor="#AAA" android:layout_marginBottom="10dp"/>
             <Button android:layout_width="80dp" android:layout_height="80dp" android:text="Chest" android:background="@drawable/btn_bg" android:textColor="#AAA" android:layout_marginBottom="10dp"/>
-            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
-                <Button android:layout_width="80dp" android:layout_height="80dp" android:text="L. Hand\n(Sword)" android:background="@drawable/btn_bg" android:textColor="#FFF" android:layout_marginRight="10dp"/>
-                <Button android:layout_width="80dp" android:layout_height="80dp" android:text="R. Hand\n(Shield)" android:background="@drawable/btn_bg" android:textColor="#FFF"/>
-            </LinearLayout>
         </LinearLayout>
         <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:orientation="vertical">
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="INVENTORY" android:textColor="#FFF" android:textSize="20sp" android:textStyle="bold" android:layout_marginBottom="20dp"/>
             <GridLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="4" android:rowCount="3">
                 <Button android:layout_width="70dp" android:layout_height="70dp" android:layout_margin="5dp" android:text="Potion" android:background="#44FFFFFF" android:textColor="#FFF"/>
                 <Button android:layout_width="70dp" android:layout_height="70dp" android:layout_margin="5dp" android:text="Apple" android:background="#44FFFFFF" android:textColor="#FFF"/>
-                <Button android:layout_width="70dp" android:layout_height="70dp" android:layout_margin="5dp" android:background="#22FFFFFF"/>
             </GridLayout>
         </LinearLayout>
         <Button android:id="@+id/btn_close_inv" android:layout_width="50dp" android:layout_height="50dp" android:layout_gravity="top|right" android:text="X" android:background="#F44336" android:textColor="#FFF" android:textStyle="bold"/>
     </LinearLayout>
-
 </RelativeLayout>
 EOF
 
@@ -121,6 +113,7 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private float tX = 0f, tY = 0f;
     private float camYaw = 0.7f, camPitch = 0.5f, camZoom = 25.0f;
     private float lastX, lastY;
+    private long shieldDownTime = 0;
     private ScaleGestureDetector zoomer;
 
     static { System.loadLibrary("procedural_engine"); }
@@ -163,7 +156,6 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
                 if (e.getAction() == MotionEvent.ACTION_DOWN) { lastX = e.getX(); lastY = e.getY(); }
                 else if (e.getAction() == MotionEvent.ACTION_MOVE) {
                     camYaw += (e.getX() - lastX) * 0.01f;
-                    // FIXED CAMERA: Allows looking up at the sky and straight down at the ground
                     camPitch = Math.max(-0.2f, Math.min(1.5f, camPitch + (e.getY() - lastY) * 0.01f));
                     lastX = e.getX(); lastY = e.getY();
                 }
@@ -187,9 +179,20 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         });
         
         findViewById(R.id.btn_sword).setOnClickListener(v -> triggerAction(1));
+        findViewById(R.id.btn_jump).setOnClickListener(v -> triggerAction(4));
+        findViewById(R.id.btn_action).setOnClickListener(v -> triggerAction(5));
+
+        // Shield Tap vs Hold Logic
         findViewById(R.id.btn_shield).setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_DOWN) triggerAction(2);
-            else if (e.getAction() == MotionEvent.ACTION_UP) triggerAction(3);
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                shieldDownTime = System.currentTimeMillis();
+                triggerAction(2); // Block ON
+            } else if (e.getAction() == MotionEvent.ACTION_UP) {
+                triggerAction(3); // Block OFF
+                if (System.currentTimeMillis() - shieldDownTime < 300) {
+                    triggerAction(6); // Shield Bash (Quick Tap)
+                }
+            }
             return true;
         });
     }
