@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# Purpose: Extremely stable C++ engine with precise matrix mapping and safe shaders.
+# Purpose: High-fidelity C++ rendering with precision-safe procedural generation and camera constraints.
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -19,7 +19,9 @@ struct Mat4 {
     float m[16] = {0};
     static Mat4 identity() { Mat4 r; r.m[0]=1; r.m[5]=1; r.m[10]=1; r.m[15]=1; return r; }
     static Mat4 perspective(float f, float a, float n, float fr) {
-        Mat4 r; float t = 1.0f/tan(f/2.0f); r.m[0]=t/a; r.m[5]=t; r.m[10]=(fr+n)/(n-fr); r.m[11]=-1; r.m[14]=(2*fr*n)/(n-fr); return r;
+        Mat4 r; float t = 1.0f/tan(f/2.0f); 
+        r.m[0]=t/a; r.m[5]=t; r.m[10]=-(fr+n)/(fr-n); r.m[11]=-1.0f; r.m[14]=-(2.0f*fr*n)/(fr-n); 
+        return r;
     }
     Mat4 mul(const Mat4& b) const {
         Mat4 r; for(int i=0; i<4; i++) for(int j=0; j<4; j++) for(int k=0; k<4; k++) r.m[i*4+j]+=m[k*4+j]*b.m[i*4+k]; return r;
@@ -36,7 +38,6 @@ float jumpT=0, slashT=0, bashT=0;
 bool block=false;
 
 GLuint createVAO(const float* d, int n) {
-    if (n == 0) return 0; // Failsafe for empty geometry
     GLuint vao, vbo; glGenVertexArrays(1,&vao); glGenBuffers(1,&vbo);
     glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER,vbo);
     glBufferData(GL_ARRAY_BUFFER, n*32, d, GL_STATIC_DRAW);
@@ -59,7 +60,7 @@ extern "C" {
             "  gl_Position=pr*v*w; vc=c;\n"
             "}";
         
-        // Mobile-safe terrain blender without complex precision noise
+        // Overflow-Safe Procedural Texturing
         const char* fS = "#version 300 es\n"
             "precision mediump float;\n"
             "in vec3 vc; in vec4 wPos;\n"
@@ -68,12 +69,9 @@ extern "C" {
             "void main(){\n"
             "  vec3 col = vc;\n"
             "  if(isT>0.5) {\n"
-            "    float pseudoNoise = fract(sin(wPos.x * 12.9898 + wPos.z * 78.233) * 43758.5453);\n"
-            "    vec3 grassCol = vec3(0.2, 0.5, 0.2);\n"
-            "    vec3 mudCol = vec3(0.4, 0.3, 0.2);\n"
-            "    // High terrain gets grass, low terrain gets mud\n"
-            "    float blend = smoothstep(-0.5, 1.5, wPos.y + pseudoNoise * 0.5);\n"
-            "    col = mix(mudCol, grassCol, blend) * vc;\n"
+            "    vec2 grid = fract(wPos.xz * 2.0);\n"
+            "    float line = step(0.9, grid.x) + step(0.9, grid.y);\n"
+            "    col = mix(vec3(0.18, 0.48, 0.18), vec3(0.1, 0.3, 0.1), clamp(line, 0.0, 1.0)) * vc;\n"
             "  }\n"
             "  o = vec4(col, 1.0);\n"
             "}";
@@ -127,7 +125,7 @@ extern "C" {
         float jumpY = 4.0f * jumpT * (1.0f - jumpT);
         float th = sin(px*0.4f)*cos(pz*0.4f)*1.5f;
 
-        // Failsafe zoom bounds ensures rendering doesn't clip
+        // Bounded constraint prevents rendering context implosion
         float safeZoom = (zoom < 4.0f) ? 8.0f : zoom;
         Mat4 v=Mat4::trans(0,0,-safeZoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1-jumpY-th,-pz));
         glUniformMatrix4fv(glGetUniformLocation(prog,"v"),1,GL_FALSE,v.m);
@@ -143,7 +141,6 @@ extern "C" {
             glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
 
-        
         // RENDER TREES
         glUniform1f(lt, 0.0f);
         for(int i=-2; i<=2; i++) for(int j=-2; j<=2; j++) {
@@ -155,12 +152,13 @@ extern "C" {
         }
 
         // RENDER CHARACTER
+        glUniform1f(lt, 0.0f);
         glUniformMatrix4fv(lm,1,GL_FALSE,tBase.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
         
         Mat4 mHead = tBase.mul(Mat4::trans(0,0.95f,0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-        // Right Arm (Shield + Vertical Fix)
+        // Right Arm (Shield + Bash Animation + Strict Vertical Rigging)
         float sRot = block ? -1.5f : (bashT > 0 ? -1.8f : sin(wt)*0.5f);
         Mat4 mRArm = tBase.mul(Mat4::trans(-0.42f, 0.65f, 0)).mul(Mat4::rotX(sRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
@@ -171,7 +169,7 @@ extern "C" {
         Mat4 mShield = mRFore.mul(Mat4::trans(0, -0.6f, 0)).mul(Mat4::rotX(1.57f)); 
         glUniformMatrix4fv(lm,1,GL_FALSE,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
 
-        // Left Arm (Sword)
+        // Left Arm (Sword + Strike Sequence)
         float swRot = (slashT > 0) ? -2.5f * sin(slashT * 3.14f) : -sin(wt)*0.5f;
         Mat4 mLArm = tBase.mul(Mat4::trans(0.42f, 0.65f, 0)).mul(Mat4::rotX(swRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mLArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
