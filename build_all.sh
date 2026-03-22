@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Starting Realistic 3D Build Pipeline..."
+echo "Starting Realistic Physics & Kinematics Build Pipeline..."
 
 # Setup Directories
 mkdir -p app/src/main/java/com/game/procedural
