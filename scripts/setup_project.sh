@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Scaffolding Android Framework and GUI..."
+echo "Scaffolding Android Framework and Advanced GUI..."
 
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -32,6 +32,7 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
+mkdir -p app/src/main/res/drawable
 cat << 'EOF' > app/src/main/res/drawable/stick_base.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#44000000"/><stroke android:width="2dp" android:color="#88FFFFFF"/></shape>
 EOF
@@ -39,14 +40,25 @@ cat << 'EOF' > app/src/main/res/drawable/stick_knob.xml
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#CCFFFFFF"/></shape>
 EOF
 cat << 'EOF' > app/src/main/res/drawable/btn_bg.xml
-<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#66000000"/><stroke android:width="3dp" android:color="#AAFFFFFF"/></shape>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval"><solid android:color="#88000000"/><stroke android:width="2dp" android:color="#AAFFFFFF"/></shape>
+EOF
+cat << 'EOF' > app/src/main/res/drawable/health_bg.xml
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background"><shape><solid android:color="#55000000"/><corners android:radius="10dp"/></shape></item>
+    <item android:id="@android:id/progress"><clip><shape><solid android:color="#FF3333"/><corners android:radius="10dp"/></shape></clip></item>
+</layer-list>
 EOF
 
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent">
     <android.opengl.GLSurfaceView android:id="@+id/game_surface" android:layout_width="match_parent" android:layout_height="match_parent" />
     
-    <Button android:id="@+id/btn_menu" android:layout_width="50dp" android:layout_height="50dp" android:layout_margin="20dp" android:layout_alignParentTop="true" android:layout_alignParentRight="true" android:text="&#9776;" android:textSize="20sp" android:background="@drawable/btn_bg" android:textColor="#FFF"/>
+    <ProgressBar android:id="@+id/health_bar" style="?android:attr/progressBarStyleHorizontal" android:layout_width="250dp" android:layout_height="25dp" android:layout_margin="20dp" android:progressDrawable="@drawable/health_bg" android:max="100" android:progress="100" />
+    
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentRight="true" android:layout_margin="20dp" android:orientation="horizontal">
+        <Button android:id="@+id/btn_inventory" android:layout_width="50dp" android:layout_height="50dp" android:layout_marginRight="15dp" android:text="🎒" android:textSize="20sp" android:background="@drawable/btn_bg" android:textColor="#FFF"/>
+        <Button android:id="@+id/btn_menu" android:layout_width="50dp" android:layout_height="50dp" android:text="&#9776;" android:textSize="20sp" android:background="@drawable/btn_bg" android:textColor="#FFF"/>
+    </LinearLayout>
 
     <RelativeLayout android:id="@+id/thumbstick_container" android:layout_width="160dp" android:layout_height="160dp" android:layout_alignParentBottom="true" android:layout_margin="30dp">
         <View android:id="@+id/thumbstick_base" android:layout_width="160dp" android:layout_height="160dp" android:background="@drawable/stick_base" />
@@ -54,14 +66,24 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
     </RelativeLayout>
 
     <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_alignParentBottom="true" android:layout_alignParentRight="true" android:layout_margin="30dp">
-        <Button android:id="@+id/btn_shield" android:layout_width="70dp" android:layout_height="70dp" android:layout_marginRight="20dp" android:layout_gravity="bottom" android:text="🛡️" android:textSize="24sp" android:background="@drawable/btn_bg" />
+        <Button android:id="@+id/btn_shield" android:layout_width="75dp" android:layout_height="75dp" android:layout_marginRight="20dp" android:layout_gravity="bottom" android:text="🛡️" android:textSize="28sp" android:background="@drawable/btn_bg" />
         <Button android:id="@+id/btn_sword" android:layout_width="90dp" android:layout_height="90dp" android:text="⚔️" android:textSize="32sp" android:background="@drawable/btn_bg" />
     </LinearLayout>
 
     <LinearLayout android:id="@+id/menu_overlay" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#E6000000" android:gravity="center" android:orientation="vertical" android:visibility="gone">
-        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="PAUSED" android:textColor="#FFF" android:textSize="40sp" android:layout_marginBottom="30dp" android:textStyle="bold"/>
-        <Button android:id="@+id/btn_resume" android:layout_width="200dp" android:layout_height="60dp" android:text="Resume Game" android:background="#4CAF50" android:textColor="#FFF" android:layout_marginBottom="20dp"/>
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="GAME PAUSED" android:textColor="#FFF" android:textSize="40sp" android:layout_marginBottom="30dp" android:textStyle="bold"/>
+        <Button android:id="@+id/btn_resume_menu" android:layout_width="200dp" android:layout_height="60dp" android:text="Resume Game" android:background="#4CAF50" android:textColor="#FFF" android:layout_marginBottom="20dp"/>
         <Button android:id="@+id/btn_exit" android:layout_width="200dp" android:layout_height="60dp" android:text="Exit to Desktop" android:background="#F44336" android:textColor="#FFF"/>
+    </LinearLayout>
+
+    <LinearLayout android:id="@+id/inventory_overlay" android:layout_width="match_parent" android:layout_height="match_parent" android:background="#E6000000" android:gravity="center" android:orientation="vertical" android:visibility="gone">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="EQUIPMENT" android:textColor="#FFF" android:textSize="30sp" android:layout_marginBottom="20dp"/>
+        <GridLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:columnCount="3" android:rowCount="2">
+            <Button android:layout_width="80dp" android:layout_height="80dp" android:layout_margin="10dp" android:text="Iron\nSword" android:background="@drawable/btn_bg" android:textColor="#FFF"/>
+            <Button android:layout_width="80dp" android:layout_height="80dp" android:layout_margin="10dp" android:text="Wood\nShield" android:background="@drawable/btn_bg" android:textColor="#FFF"/>
+            <Button android:layout_width="80dp" android:layout_height="80dp" android:layout_margin="10dp" android:text="Empty" android:background="@drawable/btn_bg" android:textColor="#888"/>
+        </GridLayout>
+        <Button android:id="@+id/btn_close_inv" android:layout_width="200dp" android:layout_height="50dp" android:layout_marginTop="30dp" android:text="Close Inventory" android:background="#555" android:textColor="#FFF"/>
     </LinearLayout>
 </RelativeLayout>
 EOF
@@ -74,14 +96,16 @@ import android.os.Bundle;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ScaleGestureDetector;
+import android.widget.ProgressBar;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
-    private View knob, menuOverlay;
+    private View knob, menuOverlay, invOverlay;
+    private ProgressBar healthBar;
     private float tX = 0f, tY = 0f;
-    private float camYaw = 0.7f, camPitch = 0.5f, camZoom = 15.0f;
+    private float camYaw = 0.7f, camPitch = 0.4f, camZoom = 15.0f;
     private float lastX, lastY;
     private ScaleGestureDetector zoomer;
 
@@ -103,14 +127,20 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
 
         knob = findViewById(R.id.thumbstick_knob);
         menuOverlay = findViewById(R.id.menu_overlay);
+        invOverlay = findViewById(R.id.inventory_overlay);
+        healthBar = findViewById(R.id.health_bar);
 
+        // UI Toggles
         findViewById(R.id.btn_menu).setOnClickListener(v -> menuOverlay.setVisibility(View.VISIBLE));
-        findViewById(R.id.btn_resume).setOnClickListener(v -> menuOverlay.setVisibility(View.GONE));
+        findViewById(R.id.btn_resume_menu).setOnClickListener(v -> menuOverlay.setVisibility(View.GONE));
         findViewById(R.id.btn_exit).setOnClickListener(v -> { finishAffinity(); System.exit(0); });
+        
+        findViewById(R.id.btn_inventory).setOnClickListener(v -> invOverlay.setVisibility(View.VISIBLE));
+        findViewById(R.id.btn_close_inv).setOnClickListener(v -> invOverlay.setVisibility(View.GONE));
 
         zoomer = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override public boolean onScale(ScaleGestureDetector d) {
-                camZoom = Math.max(5f, Math.min(40f, camZoom / d.getScaleFactor()));
+                camZoom = Math.max(5f, Math.min(30f, camZoom / d.getScaleFactor()));
                 return true;
             }
         });
@@ -121,7 +151,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
                 if (e.getAction() == MotionEvent.ACTION_DOWN) { lastX = e.getX(); lastY = e.getY(); }
                 else if (e.getAction() == MotionEvent.ACTION_MOVE) {
                     camYaw += (e.getX() - lastX) * 0.01f;
-                    camPitch = Math.max(0.1f, Math.min(1.4f, camPitch + (e.getY() - lastY) * 0.01f));
+                    // CAMERA FIX: Allow looking slightly below horizon without flipping
+                    camPitch = Math.max(-0.2f, Math.min(1.4f, camPitch + (e.getY() - lastY) * 0.01f));
                     lastX = e.getX(); lastY = e.getY();
                 }
             }
@@ -143,7 +174,10 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
             return true;
         });
         
-        findViewById(R.id.btn_sword).setOnClickListener(v -> triggerAction(1));
+        findViewById(R.id.btn_sword).setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_DOWN) triggerAction(1); // Immediate response
+            return true;
+        });
         findViewById(R.id.btn_shield).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_DOWN) triggerAction(2);
             else if (e.getAction() == MotionEvent.ACTION_UP) triggerAction(3);
@@ -153,7 +187,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig c) { onCreated(); }
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { onChanged(w, h); }
     @Override public void onDrawFrame(GL10 gl) { 
-        if(menuOverlay.getVisibility() == View.GONE) onDraw(tX, tY, camYaw, camPitch, camZoom); 
+        if(menuOverlay.getVisibility() == View.GONE && invOverlay.getVisibility() == View.GONE) 
+            onDraw(tX, tY, camYaw, camPitch, camZoom); 
     }
 }
 EOF
