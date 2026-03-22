@@ -1,8 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# Purpose: Fully restored high-fidelity engine fixing the black screen and missing limbs.
-
-mkdir -p app/src/main/cpp/models
+# Purpose: High-fidelity C++ rendering with precision-safe procedural generation.
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -32,7 +30,7 @@ struct Mat4 {
 };
 
 GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoTerrain;
-Mat4 proj; // Global projection matrix
+Mat4 proj; 
 float px=0, py=0, pz=0, pf=0, wt=0;
 float jumpT=0, slashT=0, bashT=0; 
 bool block=false;
@@ -60,19 +58,29 @@ extern "C" {
             "  gl_Position=pr*v*w; vc=c;\n"
             "}";
         
+        // Stabilized Noise for Mobile GPUs (Prevents black screens)
         const char* fS = "#version 300 es\n"
             "precision mediump float;\n"
             "in vec3 vc; in vec4 wPos;\n"
             "uniform float isT;\n"
             "out vec4 o;\n"
-            "float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }\n"
+            "float hash(vec2 p) {\n"
+            "  p = mod(p, 1000.0);\n"
+            "  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);\n"
+            "}\n"
+            "float noise(vec2 p) {\n"
+            "  vec2 i = floor(p); vec2 f = fract(p);\n"
+            "  vec2 u = f*f*(3.0-2.0*f);\n"
+            "  return mix(mix(hash(i), hash(i+vec2(1.0,0.0)), u.x),\n"
+            "             mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), u.x), u.y);\n"
+            "}\n"
             "void main(){\n"
             "  vec3 col = vc;\n"
             "  if(isT>0.5) {\n"
-            "    float n = hash(floor(wPos.xz * 15.0));\n"
-            "    vec3 grassCol = mix(vec3(0.1, 0.4, 0.1), vec3(0.3, 0.6, 0.2), n);\n"
-            "    vec3 mudCol = mix(vec3(0.3, 0.2, 0.1), vec3(0.4, 0.3, 0.2), n);\n"
-            "    col = mix(grassCol, mudCol, smoothstep(0.4, 0.6, hash(floor(wPos.xz * 2.0)))) * vc;\n"
+            "    float n = noise(wPos.xz * 8.0);\n"
+            "    vec3 grassCol = mix(vec3(0.15, 0.45, 0.15), vec3(0.25, 0.55, 0.2), n);\n"
+            "    vec3 mudCol = mix(vec3(0.35, 0.25, 0.15), vec3(0.45, 0.35, 0.25), n);\n"
+            "    col = mix(grassCol, mudCol, smoothstep(0.4, 0.6, noise(wPos.xz * 1.5))) * vc;\n"
             "  }\n"
             "  o = vec4(col, 1.0);\n"
             "}";
@@ -91,14 +99,12 @@ extern "C" {
         vaoTree = createVAO(M_TREE, N_TREE);
         vaoTerrain = createVAO(M_TERRAIN, N_TERRAIN);
 
-        // FIX 1: Restored Sky Background Color so it's not a black void
-        glClearColor(0.5f, 0.7f, 0.9f, 1.0f);
+        glClearColor(0.4f, 0.6f, 0.9f, 1.0f); // Bright blue sky
         glEnable(GL_DEPTH_TEST);
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
         glViewport(0,0,w,h);
-        // FIX 2: Protected camera from zero-division which corrupts the view
         float asp = (h <= 0) ? 1.0f : (float)w/h; 
         proj = Mat4::perspective(1.0f, asp, 0.1f, 100.0f);
     }
@@ -115,6 +121,7 @@ extern "C" {
         if(slashT > 0) slashT -= 0.05f;
         if(jumpT > 0) jumpT -= 0.04f;
         if(bashT > 0) bashT -= 0.08f;
+        
         if(fabs(ix)>0.0f || fabs(iy)>0.0f) {
             float s=sin(yaw), c=cos(yaw), dx=ix*c-(-iy)*s, dz=ix*s+(-iy)*c;
             px+=dx*0.1f; pz-=dz*0.1f; pf=atan2(-dx,dz); wt+=0.15f;
@@ -127,8 +134,7 @@ extern "C" {
         float jumpY = 4.0f * jumpT * (1.0f - jumpT);
         float th = sin(px*0.4f)*cos(pz*0.4f)*1.5f;
 
-        // FIX 3: Protected zoom so camera is not initialized completely inside the character mesh
-        float safeZoom = (zoom < 5.0f) ? 10.0f : zoom;
+        float safeZoom = (zoom < 4.0f) ? 8.0f : zoom;
         Mat4 v=Mat4::trans(0,0,-safeZoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1-jumpY-th,-pz));
         glUniformMatrix4fv(glGetUniformLocation(prog,"v"),1,GL_FALSE,v.m);
         
@@ -137,13 +143,13 @@ extern "C" {
 
         // RENDER TERRAIN
         glUniform1f(lt, 1.0f);
-        for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
+        for(int i=-3; i<=3; i++) for(int j=-3; j<=3; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
             Mat4 tm=Mat4::trans(tx,0,tz);
             glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
 
-        // RENDER TREES (Restored)
+        // RENDER TREES
         glUniform1f(lt, 0.0f);
         for(int i=-2; i<=2; i++) for(int j=-2; j<=2; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
@@ -153,44 +159,45 @@ extern "C" {
             }
         }
 
-        // RENDER CHARACTER (Fully restored all body parts)
+        // RENDER CHARACTER
         glUniform1f(lt, 0.0f);
         glUniformMatrix4fv(lm,1,GL_FALSE,tBase.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
         
-        Mat4 mHead = tBase.mul(Mat4::trans(0,0.85f,0));
+        Mat4 mHead = tBase.mul(Mat4::trans(0,0.95f,0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-        // Right Arm (Shield + Bash Animation + Vertical fix)
+        // Right Arm (Shield + Bash Animation + Perfect Vertical Alignment)
         float sRot = block ? -1.5f : (bashT > 0 ? -1.8f : sin(wt)*0.5f);
-        Mat4 mRArm = tBase.mul(Mat4::trans(-0.35f, 0.6f, 0)).mul(Mat4::rotX(sRot));
+        Mat4 mRArm = tBase.mul(Mat4::trans(-0.42f, 0.65f, 0)).mul(Mat4::rotX(sRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         
-        Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.45f, 0));
+        Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.5f, 0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        Mat4 mShield = mRFore.mul(Mat4::trans(0, -0.48f, 0)).mul(Mat4::rotX(1.57f)); 
+        // Explicit 90-degree pitch on the shield relative to the hand ensures it stays perfectly upright!
+        Mat4 mShield = mRFore.mul(Mat4::trans(0, -0.6f, 0)).mul(Mat4::rotX(1.57f)); 
         glUniformMatrix4fv(lm,1,GL_FALSE,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
 
         // Left Arm (Sword + Attack Animation)
         float swRot = (slashT > 0) ? -2.5f * sin(slashT * 3.14f) : -sin(wt)*0.5f;
-        Mat4 mLArm = tBase.mul(Mat4::trans(0.35f, 0.6f, 0)).mul(Mat4::rotX(swRot));
+        Mat4 mLArm = tBase.mul(Mat4::trans(0.42f, 0.65f, 0)).mul(Mat4::rotX(swRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mLArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
 
-        Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.45f, 0));
+        Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.5f, 0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mLFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        Mat4 mSword = mLFore.mul(Mat4::trans(0,-0.48f,0));
+        Mat4 mSword = mLFore.mul(Mat4::trans(0,-0.6f,0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mSword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
 
-        // Legs (Restored)
-        Mat4 mRLeg = tBase.mul(Mat4::trans(-0.15f, 0.0f, 0)).mul(Mat4::rotX(-sin(wt)*0.8f));
+        // Legs
+        Mat4 mRLeg = tBase.mul(Mat4::trans(-0.2f, 0.0f, 0)).mul(Mat4::rotX(-sin(wt)*0.8f));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
-        Mat4 mRLegLow = mRLeg.mul(Mat4::trans(0, -0.45f, 0));
+        Mat4 mRLegLow = mRLeg.mul(Mat4::trans(0, -0.5f, 0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRLegLow.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        Mat4 mLLeg = tBase.mul(Mat4::trans(0.15f, 0.0f, 0)).mul(Mat4::rotX(sin(wt)*0.8f));
+        Mat4 mLLeg = tBase.mul(Mat4::trans(0.2f, 0.0f, 0)).mul(Mat4::rotX(sin(wt)*0.8f));
         glUniformMatrix4fv(lm,1,GL_FALSE,mLLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
-        Mat4 mLLegLow = mLLeg.mul(Mat4::trans(0, -0.45f, 0));
+        Mat4 mLLegLow = mLLeg.mul(Mat4::trans(0, -0.5f, 0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mLLegLow.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
     }
 }
