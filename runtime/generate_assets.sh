@@ -1,9 +1,10 @@
 #!/bin/bash
 # File: runtime/generate_assets.sh
-# Purpose: High-fidelity model generation with UV mapping, realistic trees, and proper anatomy.
+# Purpose: High-fidelity model generation with UV mapping, realistic trees, and robust headless exporting.
 
 cat << 'EOF' > runtime/python/export_utils.py
 import bpy
+import bmesh
 import math
 
 def clean():
@@ -19,17 +20,23 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
             for poly in obj.data.polygons: poly.use_smooth = True
             
     bpy.ops.object.select_all(action='SELECT')
+    if not bpy.context.selected_objects: return
     bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
     bpy.ops.object.join()
-    obj = bpy.context.object
-    bpy.ops.object.modifier_add(type='TRIANGULATE')
-    bpy.ops.object.modifier_apply(modifier=obj.modifiers[-1].name)
     
-    verts = []
+    obj = bpy.context.object
     mesh = obj.data
+    
+    # ROBUST HEADLESS TRIANGULATION: Uses bmesh directly instead of volatile modifiers
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    bm.to_mesh(mesh)
+    bm.free()
+    
     mesh.calc_loop_triangles()
     
-    # Generate simple UV mapping (planar or cylindrical)
+    verts = []
     if not mesh.uv_layers:
         mesh.uv_layers.new()
     uv_layer = mesh.uv_layers.active.data
@@ -42,20 +49,19 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
             v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
             uv = uv_layer[loop_idx].uv
             
-            # Use X/Y position for top-down UV mapping (ideal for terrain)
             u = v.co.x * 0.5
             v_coord = v.co.y * 0.5
             
-            # Export format: X, Y, Z, R, G, B, U, V
+            # X, Y, Z (Converted from Blender Z-up to OpenGL Y-up)
             verts.extend([v.co.x, v.co.z, -v.co.y])
             
-            # Lighting
             norm = v.normal
             sun_dir = [0.5, 0.7, 0.5]
             dot_prod = max(0.0, (norm.x*sun_dir[0] + norm.y*sun_dir[1] + norm.z*sun_dir[2]))
             lum = 0.4 + (dot_prod * 0.6)
             ao = 0.5 + (0.5 * ((v.co.z - min_z) / height)) if height > 0 else 1.0
             
+            # R, G, B, U, V
             verts.extend([r*lum*ao, g*lum*ao, b*lum*ao, u, v_coord])
             
     with open(outfile, "a") as f:
@@ -69,11 +75,8 @@ sys.path.append('runtime/python')
 from export_utils import bake_and_export
 
 def build_torso():
-    # Core Torso
     bpy.ops.mesh.primitive_cylinder_add(vertices=24, radius=0.28, depth=0.7, location=(0,0,0.35))
-    # Neck (Connecting head securely)
     bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.2, location=(0,0,0.75))
-    # Shoulders joints (integrated so limbs don't float)
     bpy.ops.mesh.primitive_uv_sphere_add(segments=16, radius=0.15, location=(0.35,0,0.6))
     bpy.ops.mesh.primitive_uv_sphere_add(segments=16, radius=0.15, location=(-0.35,0,0.6))
 
@@ -82,11 +85,10 @@ def build_head():
 
 def build_upper_limb(): 
     bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.1, depth=0.45, location=(0,0,-0.225))
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=16, radius=0.11, location=(0,0,-0.45)) # Elbow Joint
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=16, radius=0.11, location=(0,0,-0.45))
 
 def build_lower_limb(): 
     bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.08, depth=0.45, location=(0,0,-0.225))
-    # Hand/Foot integration
     bpy.ops.mesh.primitive_cube_add(size=0.14, location=(0,0,-0.48))
 
 def build_sword():
@@ -106,10 +108,8 @@ def build_shield():
 def build_tree():
     def branch(loc, angle_x, angle_y, level, scale):
         if level == 0:
-            # Add Needles/Leaves
             bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=0.8 * scale, location=loc)
             return
-        # Branch segment
         bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=0.12 * scale, depth=2.0 * scale, location=loc)
         b = bpy.context.object
         b.rotation_euler = (angle_x, angle_y, 0)
@@ -119,7 +119,6 @@ def build_tree():
         offset_y = -math.sin(angle_x) * (1.0 * scale)
         next_loc = (loc[0] + offset_x, loc[1] + offset_y, loc[2] + offset_z)
 
-        # Recursive branching
         branch(next_loc, angle_x + 0.6, angle_y + 0.4, level - 1, scale * 0.7)
         branch(next_loc, angle_x - 0.4, angle_y - 0.6, level - 1, scale * 0.7)
         if level > 1:
