@@ -1,8 +1,7 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# Purpose: High-fidelity engine with restored gameplay mechanics and fix for CXX1400.
+# Purpose: Fully restored high-fidelity engine fixing the black screen and missing limbs.
 
-# Ensure the directory exists before writing files
 mkdir -p app/src/main/cpp/models
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
@@ -91,12 +90,17 @@ extern "C" {
         vaoShield = createVAO(M_SHIELD, N_SHIELD);
         vaoTree = createVAO(M_TREE, N_TREE);
         vaoTerrain = createVAO(M_TERRAIN, N_TERRAIN);
+
+        // FIX 1: Restored Sky Background Color so it's not a black void
+        glClearColor(0.5f, 0.7f, 0.9f, 1.0f);
         glEnable(GL_DEPTH_TEST);
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
         glViewport(0,0,w,h);
-        proj = Mat4::perspective(1.0f, (float)w/h, 0.1f, 100.0f);
+        // FIX 2: Protected camera from zero-division which corrupts the view
+        float asp = (h <= 0) ? 1.0f : (float)w/h; 
+        proj = Mat4::perspective(1.0f, asp, 0.1f, 100.0f);
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
@@ -122,13 +126,16 @@ extern "C" {
         
         float jumpY = 4.0f * jumpT * (1.0f - jumpT);
         float th = sin(px*0.4f)*cos(pz*0.4f)*1.5f;
-        Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1-jumpY-th,-pz));
+
+        // FIX 3: Protected zoom so camera is not initialized completely inside the character mesh
+        float safeZoom = (zoom < 5.0f) ? 10.0f : zoom;
+        Mat4 v=Mat4::trans(0,0,-safeZoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1-jumpY-th,-pz));
         glUniformMatrix4fv(glGetUniformLocation(prog,"v"),1,GL_FALSE,v.m);
         
         GLint lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"isT");
         Mat4 tBase = Mat4::trans(px, th+1.0f+jumpY, pz).mul(Mat4::rotY(pf));
 
-        // Render Terrain
+        // RENDER TERRAIN
         glUniform1f(lt, 1.0f);
         for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
@@ -136,21 +143,55 @@ extern "C" {
             glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
 
-        // Render Character (Matrix separation ensures no deformation)
+        // RENDER TREES (Restored)
+        glUniform1f(lt, 0.0f);
+        for(int i=-2; i<=2; i++) for(int j=-2; j<=2; j++) {
+            float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
+            if(fmod(tx*1.2f+tz*0.8f, 6.f) > 4.5f) {
+                Mat4 tm=Mat4::trans(tx, sin(tx*0.4f)*cos(tz*0.4f)*1.5f, tz);
+                glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES,0,N_TREE);
+            }
+        }
+
+        // RENDER CHARACTER (Fully restored all body parts)
         glUniform1f(lt, 0.0f);
         glUniformMatrix4fv(lm,1,GL_FALSE,tBase.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
         
-        // Shield (Vertical Fix + Bash Animation)
+        Mat4 mHead = tBase.mul(Mat4::trans(0,0.85f,0));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
+
+        // Right Arm (Shield + Bash Animation + Vertical fix)
         float sRot = block ? -1.5f : (bashT > 0 ? -1.8f : sin(wt)*0.5f);
         Mat4 mRArm = tBase.mul(Mat4::trans(-0.35f, 0.6f, 0)).mul(Mat4::rotX(sRot));
-        Mat4 mShield = mRArm.mul(Mat4::trans(0, -0.9f, 0)).mul(Mat4::rotX(1.57f)); 
+        glUniformMatrix4fv(lm,1,GL_FALSE,mRArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        
+        Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mRFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+
+        Mat4 mShield = mRFore.mul(Mat4::trans(0, -0.48f, 0)).mul(Mat4::rotX(1.57f)); 
         glUniformMatrix4fv(lm,1,GL_FALSE,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
 
-        // Sword (Attack Swing)
+        // Left Arm (Sword + Attack Animation)
         float swRot = (slashT > 0) ? -2.5f * sin(slashT * 3.14f) : -sin(wt)*0.5f;
         Mat4 mLArm = tBase.mul(Mat4::trans(0.35f, 0.6f, 0)).mul(Mat4::rotX(swRot));
-        Mat4 mSword = mLArm.mul(Mat4::trans(0,-0.9f,0));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mLArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+
+        Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mLFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+
+        Mat4 mSword = mLFore.mul(Mat4::trans(0,-0.48f,0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mSword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
+
+        // Legs (Restored)
+        Mat4 mRLeg = tBase.mul(Mat4::trans(-0.15f, 0.0f, 0)).mul(Mat4::rotX(-sin(wt)*0.8f));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mRLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        Mat4 mRLegLow = mRLeg.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mRLegLow.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+
+        Mat4 mLLeg = tBase.mul(Mat4::trans(0.15f, 0.0f, 0)).mul(Mat4::rotX(sin(wt)*0.8f));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mLLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        Mat4 mLLegLow = mLLeg.mul(Mat4::trans(0, -0.45f, 0));
+        glUniformMatrix4fv(lm,1,GL_FALSE,mLLegLow.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
     }
 }
 EOF
