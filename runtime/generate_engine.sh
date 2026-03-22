@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "Injecting Physics Engine and Combo Combat System..."
+echo "Injecting Kinematics Physics Engine and Combo Systems..."
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -28,16 +28,17 @@ struct Mat4 {
     static Mat4 trans(float x, float y, float z) { Mat4 r=identity(); r.m[12]=x; r.m[13]=y; r.m[14]=z; return r; }
     static Mat4 rotY(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[2]=-sin(a); r.m[8]=sin(a); r.m[10]=cos(a); return r; }
     static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
+    static Mat4 rotZ(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[1]=sin(a); r.m[4]=-sin(a); r.m[5]=cos(a); return r; }
 };
 
-// PHYSICS: Mathematical Terrain Alignment
+// MATHEMATICAL TERRAIN ALIGNMENT
 float getTerrainHeight(float x, float z) {
     return sin(x * 0.4f) * cos(z * 0.4f) * 1.2f;
 }
 
-GLuint prog, vaoHero, vaoSword, vaoTree, vaoTerrain;
+GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoTerrain;
 float px=0, pz=0, pf=0, wt=0, st=0;
-int comboState = 0; // 0: Idle, 1: Swipe L, 2: Swipe R, 3: Overhead
+int comboState = 0; 
 volatile bool block=false;
 Mat4 proj;
 
@@ -51,7 +52,6 @@ GLuint createVAO(const float* d, int n) {
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
-        // GPU Shader exactly matches the CPU physics formula
         const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m,v,pr; uniform float isT; out vec3 vc; out vec4 viewPos; void main(){ vec4 w=m*vec4(p,1.0); if(isT>0.5) w.y += sin(w.x*0.4)*cos(w.z*0.4)*1.2; viewPos=v*w; gl_Position=pr*viewPos; vc=c; }";
         const char* fS = "#version 300 es\nprecision mediump float; in vec3 vc; in vec4 viewPos; out vec4 o; void main(){ float dist=length(viewPos.xyz); float fog=clamp((dist-10.0)/40.0, 0.0, 1.0); vec3 sky=vec3(0.5,0.7,0.9); o=vec4(mix(vc,sky,fog), 1.0); }";
         
@@ -60,7 +60,9 @@ extern "C" {
         prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog); glUseProgram(prog);
         glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE);
         
-        vaoHero=createVAO(M_HERO, N_HERO); vaoSword=createVAO(M_SWORD, N_SWORD); 
+        vaoTorso=createVAO(M_TORSO, N_TORSO); vaoHead=createVAO(M_HEAD, N_HEAD);
+        vaoUpLimb=createVAO(M_UP_LIMB, N_UP_LIMB); vaoLowLimb=createVAO(M_LOW_LIMB, N_LOW_LIMB);
+        vaoSword=createVAO(M_SWORD, N_SWORD); vaoShield=createVAO(M_SHIELD, N_SHIELD);
         vaoTree=createVAO(M_TREE, N_TREE); vaoTerrain=createVAO(M_TERRAIN, N_TERRAIN);
     }
     
@@ -69,15 +71,14 @@ extern "C" {
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat yaw, jfloat pitch, jfloat zoom) {
+        float speed = 0.0f;
         if(fabs(ix)>0.05f || fabs(iy)>0.05f) {
             float s=sin(yaw), c=cos(yaw), dx=ix*c-(-iy)*s, dz=ix*s+(-iy)*c;
-            px+=dx*0.14f; pz-=dz*0.14f; pf=atan2(-dx,dz); wt+=0.2f;
-        }
+            px+=dx*0.14f; pz-=dz*0.14f; pf=atan2(-dx,dz); 
+            wt+=0.2f; speed = 1.0f;
+        } else { wt = 0; }
 
-        if(comboState > 0) {
-            st += 0.3f;
-            if(st > 3.14f) { comboState = 0; st = 0; }
-        }
+        if(comboState > 0) { st += 0.3f; if(st > 3.14f) { comboState = 0; st = 0; } }
 
         glClearColor(0.5f, 0.7f, 0.9f, 1.0f); 
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); 
@@ -85,18 +86,20 @@ extern "C" {
         GLint lp=glGetUniformLocation(prog,"pr"), lv=glGetUniformLocation(prog,"v"), lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"isT");
         glUniformMatrix4fv(lp,1,0,proj.m);
         
+        // Base Anchor. Py = True Terrain + 0.8f (Total Leg Length)
         float py = getTerrainHeight(px, pz);
-        Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-(py+1.5f),-pz));
+        float hipHeight = py + 0.8f + (sin(wt*2.0f)*0.05f * speed);
+        Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-(hipHeight+1.0f),-pz));
         glUniformMatrix4fv(lv,1,0,v.m);
         
-        glUniform1f(lt, 1.0f); 
+        glUniform1f(lt, 1.0f); // Enable GPU Terrain Displacement
         for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
             float tx=floor(px/8.f)*8.f+i*8.f, tz=floor(pz/8.f)*8.f+j*8.f;
             Mat4 tm=Mat4::trans(tx,0,tz); glUniformMatrix4fv(lm,1,0,tm.m);
             glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
         
-        glUniform1f(lt, 0.0f); 
+        glUniform1f(lt, 0.0f); // Disable for Props
         glBindVertexArray(vaoTree);
         for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
             float tx=floor(px/8.f)*8.f+i*8.f, tz=floor(pz/8.f)*8.f+j*8.f;
@@ -107,25 +110,55 @@ extern "C" {
             }
         }
         
-        Mat4 h=Mat4::trans(px,py + (sin(wt)*0.08f),pz).mul(Mat4::rotY(pf));
-        glUniformMatrix4fv(lm,1,0,h.m); glBindVertexArray(vaoHero); glDrawArrays(GL_TRIANGLES,0,N_HERO);
+        // --- HIERARCHICAL KINEMATICS ---
+        Mat4 root = Mat4::trans(px, hipHeight, pz).mul(Mat4::rotY(pf));
         
-        Mat4 s=h; 
-        if(comboState == 1) s=h.mul(Mat4::trans(0,0.5,0)).mul(Mat4::rotY(-sin(st)*2.0)).mul(Mat4::rotX(-1.5)).mul(Mat4::trans(0,-0.5,0));
-        else if(comboState == 2) s=h.mul(Mat4::trans(0,0.5,0)).mul(Mat4::rotY(sin(st)*2.0)).mul(Mat4::rotX(-1.5)).mul(Mat4::trans(0,-0.5,0));
-        else if(comboState == 3) s=h.mul(Mat4::trans(0,0.5,0)).mul(Mat4::rotX(-sin(st)*3.0)).mul(Mat4::trans(0,-0.5,0));
+        // Torso & Head
+        glUniformMatrix4fv(lm,1,0,root.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
+        Mat4 head = root.mul(Mat4::trans(0,0.6f,0));
+        glUniformMatrix4fv(lm,1,0,head.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
+
+        // Legs (Bending Knees)
+        float swingL = sin(wt) * 0.8f * speed; float swingR = sin(wt + 3.1415f) * 0.8f * speed;
         
-        glUniformMatrix4fv(lm,1,0,s.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
+        Mat4 hipL = root.mul(Mat4::trans(0.15f,0,0)).mul(Mat4::rotX(swingL));
+        glUniformMatrix4fv(lm,1,0,hipL.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        Mat4 kneeL = hipL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingL > 0 ? swingL : 0)); // Knee bends backward
+        glUniformMatrix4fv(lm,1,0,kneeL.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+        
+        Mat4 hipR = root.mul(Mat4::trans(-0.15f,0,0)).mul(Mat4::rotX(swingR));
+        glUniformMatrix4fv(lm,1,0,hipR.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        Mat4 kneeR = hipR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingR > 0 ? swingR : 0));
+        glUniformMatrix4fv(lm,1,0,kneeR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+
+        // Arms & Combat Integration
+        float armL = -swingL * 0.6f; float armR = -swingR * 0.6f;
+        Mat4 shL = root.mul(Mat4::trans(-0.3f,0.5f,0)).mul(Mat4::rotX(armL));
+        Mat4 elbL = shL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(block ? -1.5f : -0.2f));
+        
+        Mat4 shR = root.mul(Mat4::trans(0.3f,0.5f,0));
+        if(comboState == 1) shR = shR.mul(Mat4::rotY(-sin(st)*2.0)).mul(Mat4::rotX(-1.5));
+        else if(comboState == 2) shR = shR.mul(Mat4::rotY(sin(st)*2.0)).mul(Mat4::rotX(-1.5));
+        else if(comboState == 3) shR = shR.mul(Mat4::rotX(-sin(st)*3.0));
+        else shR = shR.mul(Mat4::rotX(armR));
+        Mat4 elbR = shR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(-0.2f));
+
+        glUniformMatrix4fv(lm,1,0,shL.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        glUniformMatrix4fv(lm,1,0,elbL.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+        glUniformMatrix4fv(lm,1,0,shR.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
+        glUniformMatrix4fv(lm,1,0,elbR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
+        
+        // Equipment Tracking
+        Mat4 shield = elbL.mul(Mat4::trans(0,-0.2f,0.1f)).mul(Mat4::rotX(1.57f));
+        glUniformMatrix4fv(lm,1,0,shield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
+        
+        Mat4 sword = elbR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(1.57f));
+        glUniformMatrix4fv(lm,1,0,sword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1) {
-            if(comboState == 0 || st > 2.0f) { 
-                comboState++; 
-                if(comboState > 3) comboState = 1; 
-                st = 0; 
-            }
-        } 
+        if(id==1) { if(comboState == 0 || st > 2.0f) { comboState++; if(comboState > 3) comboState = 1; st = 0; } } 
+        else if(id==2) block=true; else block=false;
     }
 }
 EOF
