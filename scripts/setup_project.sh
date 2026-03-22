@@ -1,9 +1,120 @@
 #!/bin/bash
 # File: scripts/setup_project.sh
 
+# 1. Create directory structure
 mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/java/com/game/procedural
+mkdir -p app/src/main/cpp
 
+# 2. Generate Gradle Build Files
+cat << 'EOF' > settings.gradle
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "EndlessRPG"
+include ':app'
+EOF
+
+cat << 'EOF' > build.gradle
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        // Defines the Android Gradle Plugin version
+        classpath 'com.android.tools.build:gradle:8.1.0' 
+    }
+}
+EOF
+
+cat << 'EOF' > gradle.properties
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+EOF
+
+cat << 'EOF' > app/build.gradle
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.game.procedural'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.game.procedural"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+}
+EOF
+
+# 3. Generate CMake config for the C++ Engine
+cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
+cmake_minimum_required(VERSION 3.22.1)
+project("procedural_engine")
+
+# Add your dynamically generated C++ engine file
+add_library(procedural_engine SHARED engine.cpp)
+
+# Link to Android's native OpenGL ES 3, EGL, and logging libraries
+find_library(log-lib log)
+find_library(GLES3-lib GLESv3)
+find_library(EGL-lib EGL)
+
+target_link_libraries(procedural_engine ${log-lib} ${GLES3-lib} ${EGL-lib})
+EOF
+
+# 4. Generate Android Manifest
+cat << 'EOF' > app/src/main/AndroidManifest.xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.game.procedural">
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <application
+        android:allowBackup="true"
+        android:label="Endless RPG"
+        android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <activity android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOF
+
+# 5. Generate UI Layout (activity_main.xml)
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <?xml version="1.0" encoding="utf-8"?>
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -92,6 +203,7 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 </RelativeLayout>
 EOF
 
+# 6. Generate Main Java Activity
 cat << 'EOF' > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 
@@ -120,7 +232,6 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private float tX = 0f, tY = 0f;
     private long shieldDownTime = 0;
     
-    // Compass variables
     private ImageView compassView;
     private Button compassToggleBtn;
     private boolean isCompassLocked = false;
@@ -135,7 +246,6 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         glView.setRenderer(this);
 
         knob = findViewById(R.id.joystick_knob);
-        
         compassView = findViewById(R.id.img_compass);
         compassToggleBtn = findViewById(R.id.btn_compass_toggle);
         
