@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# Purpose: High-fidelity C++ rendering with precision-safe procedural generation and complete gameplay logic.
+# Purpose: Render pipeline with instanced details, sketch shader, and fixed orientations.
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -29,9 +29,16 @@ struct Mat4 {
     static Mat4 trans(float x, float y, float z) { Mat4 r=identity(); r.m[12]=x; r.m[13]=y; r.m[14]=z; return r; }
     static Mat4 rotY(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[2]=-sin(a); r.m[8]=sin(a); r.m[10]=cos(a); return r; }
     static Mat4 rotX(float a) { Mat4 r=identity(); r.m[5]=cos(a); r.m[6]=sin(a); r.m[9]=-sin(a); r.m[10]=cos(a); return r; }
+    static Mat4 rotZ(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[1]=sin(a); r.m[4]=-sin(a); r.m[5]=cos(a); return r; }
 };
 
+float hash(float x, float z) {
+    float n = sin(x * 12.9898f + z * 78.233f) * 43758.5453f;
+    return n - floor(n);
+}
+
 GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoTerrain;
+GLuint vaoRock, vaoGrass, vaoWheat;
 Mat4 proj; 
 float px=0, py=0, pz=0, pf=0, wt=0;
 float jumpT=0, slashT=0, bashT=0; 
@@ -52,40 +59,29 @@ extern "C" {
         const char* vS = "#version 300 es\n"
             "layout(location=0) in vec3 p; layout(location=1) in vec3 c; layout(location=2) in vec2 uv;\n"
             "uniform mat4 m,v,pr; uniform float isT;\n"
-            "out vec3 vc; out vec4 wPos;\n"
+            "out vec3 vc; out vec4 wPos; out vec4 sPos;\n"
             "void main(){\n"
             "  vec4 w=m*vec4(p,1.0);\n"
             "  if(isT>0.5) w.y += sin(w.x*0.4)*cos(w.z*0.4)*1.5;\n"
             "  wPos = w;\n"
-            "  gl_Position=pr*v*w; vc=c;\n"
+            "  sPos = pr*v*w;\n"
+            "  gl_Position=sPos; vc=c;\n"
             "}";
         
-        // High-Resolution Grass/Mud Procedural Texturing
+        // PENCIL SKETCH SHADER: Applies a screen-space high-frequency crosshatch overlay to shadows
         const char* fS = "#version 300 es\n"
             "precision highp float;\n"
-            "in vec3 vc; in vec4 wPos;\n"
+            "in vec3 vc; in vec4 wPos; in vec4 sPos;\n"
             "uniform float isT;\n"
             "out vec4 o;\n"
-            "float hash(vec2 p) { p = mod(p, 10000.0); return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }\n"
-            "float noise(vec2 p) {\n"
-            "  vec2 i = floor(p); vec2 f = fract(p); vec2 u = f*f*(3.0-2.0*f);\n"
-            "  return mix(mix(hash(i), hash(i+vec2(1.0,0.0)), u.x),\n"
-            "             mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), u.x), u.y);\n"
-            "}\n"
-            "float fbm(vec2 p) {\n"
-            "  float f = 0.0; float w = 0.5;\n"
-            "  for(int i=0; i<4; i++) { f += w * noise(p); p *= 2.0; w *= 0.5; }\n"
-            "  return f;\n"
-            "}\n"
             "void main(){\n"
             "  vec3 col = vc;\n"
-            "  if(isT>0.5) {\n"
-            "    float detail = fbm(wPos.xz * 15.0);\n"
-            "    float mudMap = fbm(wPos.xz * 2.0);\n"
-            "    vec3 grassCol = mix(vec3(0.1, 0.4, 0.1), vec3(0.2, 0.6, 0.15), detail);\n"
-            "    vec3 mudCol = mix(vec3(0.25, 0.15, 0.1), vec3(0.35, 0.25, 0.15), detail);\n"
-            "    col = mix(grassCol, mudCol, smoothstep(0.4, 0.6, mudMap)) * (0.5 + 0.5 * vc);\n"
-            "  }\n"
+            "  if(isT>0.5) { col = vec3(0.5, 0.6, 0.4) * vc; }\n"
+            "  // Pencil Sketch / Hatching logic\n"
+            "  vec2 scr = sPos.xy / sPos.w;\n"
+            "  float hatch = sin(scr.x * 200.0 + scr.y * 200.0) * sin(scr.x * -200.0 + scr.y * 200.0);\n"
+            "  float luminance = dot(col, vec3(0.299, 0.587, 0.114));\n"
+            "  if(luminance < 0.4 && hatch < 0.0) { col *= 0.6; } // Draw pencil strokes in shadows\n"
             "  o = vec4(col, 1.0);\n"
             "}";
 
@@ -94,16 +90,14 @@ extern "C" {
         glShaderSource(fs,1,&fS,0); glCompileShader(fs);
         prog=glCreateProgram(); glAttachShader(prog,vs); glAttachShader(prog,fs); glLinkProgram(prog);
 
-        vaoTorso = createVAO(M_TORSO, N_TORSO);
-        vaoHead = createVAO(M_HEAD, N_HEAD);
-        vaoUpLimb = createVAO(M_UP_LIMB, N_UP_LIMB);
-        vaoLowLimb = createVAO(M_LOW_LIMB, N_LOW_LIMB);
-        vaoSword = createVAO(M_SWORD, N_SWORD);
-        vaoShield = createVAO(M_SHIELD, N_SHIELD);
-        vaoTree = createVAO(M_TREE, N_TREE);
+        vaoTorso = createVAO(M_TORSO, N_TORSO); vaoHead = createVAO(M_HEAD, N_HEAD);
+        vaoUpLimb = createVAO(M_UP_LIMB, N_UP_LIMB); vaoLowLimb = createVAO(M_LOW_LIMB, N_LOW_LIMB);
+        vaoSword = createVAO(M_SWORD, N_SWORD); vaoShield = createVAO(M_SHIELD, N_SHIELD);
+        vaoRock = createVAO(M_ROCK, N_ROCK); vaoGrass = createVAO(M_GRASS, N_GRASS);
+        vaoWheat = createVAO(M_WHEAT, N_WHEAT); vaoTree = createVAO(M_TREE, N_TREE);
         vaoTerrain = createVAO(M_TERRAIN, N_TERRAIN);
 
-        glClearColor(0.4f, 0.65f, 0.95f, 1.0f); // Bright blue sky
+        glClearColor(0.85f, 0.85f, 0.82f, 1.0f); // Paper/Parchment background for sketch vibe
         glEnable(GL_DEPTH_TEST);
     }
 
@@ -113,7 +107,6 @@ extern "C" {
         proj = Mat4::perspective(1.0f, asp, 0.1f, 100.0f);
     }
 
-    // Fully restored gameplay functionality hooks
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
         if(id==1) slashT=1.0f;
         if(id==2) block=true;
@@ -146,7 +139,7 @@ extern "C" {
         GLint lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"isT");
         Mat4 tBase = Mat4::trans(px, th+1.0f+jumpY, pz).mul(Mat4::rotY(pf));
 
-        // RENDER TERRAIN
+        // 1. TERRAIN
         glUniform1f(lt, 1.0f);
         for(int i=-3; i<=3; i++) for(int j=-3; j<=3; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
@@ -154,46 +147,56 @@ extern "C" {
             glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
 
-        // RENDER REALISTIC TREES
+        // 2. PROCEDURAL CLUTTER (Trees, Grass, Wheat, Rocks)
         glUniform1f(lt, 0.0f);
-        for(int i=-2; i<=2; i++) for(int j=-2; j<=2; j++) {
-            float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
-            if(fmod(tx*1.2f+tz*0.8f, 6.f) > 4.5f) {
-                Mat4 tm=Mat4::trans(tx, sin(tx*0.4f)*cos(tz*0.4f)*1.5f, tz);
+        for(int i=-16; i<=16; i++) for(int j=-16; j<=16; j++) {
+            float tx=floor(px/2.f)*2.f+i*2.f, tz=floor(pz/2.f)*2.f+j*2.f;
+            float hsh = hash(tx, tz);
+            float ty = sin(tx*0.4f)*cos(tz*0.4f)*1.5f;
+            
+            Mat4 tm=Mat4::trans(tx, ty, tz).mul(Mat4::rotY(hsh * 6.28f));
+            
+            if(hsh > 0.95f) {
                 glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES,0,N_TREE);
+            } else if (hsh > 0.90f) {
+                glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoRock); glDrawArrays(GL_TRIANGLES,0,N_ROCK);
+            } else if (hsh > 0.60f) {
+                glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoWheat); glDrawArrays(GL_TRIANGLES,0,N_WHEAT);
+            } else if (hsh > 0.10f) {
+                glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoGrass); glDrawArrays(GL_TRIANGLES,0,N_GRASS);
             }
         }
 
-        // RENDER ANATOMICAL CHARACTER
+        // 3. CHARACTER RENDERING
         glUniformMatrix4fv(lm,1,GL_FALSE,tBase.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
-        
         Mat4 mHead = tBase.mul(Mat4::trans(0, 0.8f, 0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-        // Right Arm (Shield + Bash Animation + Strict Vertical Rigging)
+        // RIGHT ARM & SHIELD (Fixed perfectly parallel block)
         float sRot = block ? -1.5f : (bashT > 0 ? -1.8f : sin(wt)*0.5f);
         Mat4 mRArm = tBase.mul(Mat4::trans(-0.38f, 0.6f, 0)).mul(Mat4::rotX(sRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         
-        Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.35f, 0));
+        Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX(block ? -0.5f : 0.0f)); // Bend elbow when blocking
         glUniformMatrix4fv(lm,1,GL_FALSE,mRFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        // Correct Deformation: Hard 90-degree (1.57 rad) pitch on the shield!
-        Mat4 mShield = mRFore.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX(1.57f)); 
+        // Shield sits on the outside of the arm, oriented correctly using Blender's pre-rotation
+        Mat4 mShield = mRFore.mul(Mat4::trans(-0.1f, -0.2f, 0)); 
         glUniformMatrix4fv(lm,1,GL_FALSE,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
 
-        // Left Arm (Sword + Strike Sequence)
+        // LEFT ARM & SWORD (Fixed grip orientation)
         float swRot = (slashT > 0) ? -2.5f * sin(slashT * 3.14f) : -sin(wt)*0.5f;
         Mat4 mLArm = tBase.mul(Mat4::trans(0.38f, 0.6f, 0)).mul(Mat4::rotX(swRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mLArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
 
-        Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.35f, 0));
+        Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX((slashT > 0) ? -0.5f : 0.0f)); 
         glUniformMatrix4fv(lm,1,GL_FALSE,mLFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
+        // Sword connects exactly at hand (trans 0, -0.35, 0) and points forward thanks to Blender pre-rotation
         Mat4 mSword = mLFore.mul(Mat4::trans(0, -0.35f, 0));
         glUniformMatrix4fv(lm,1,GL_FALSE,mSword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
 
-        // Legs
+        // LEGS
         Mat4 mRLeg = tBase.mul(Mat4::trans(-0.15f, 0.0f, 0)).mul(Mat4::rotX(-sin(wt)*0.8f));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         Mat4 mRLegLow = mRLeg.mul(Mat4::trans(0, -0.35f, 0));
