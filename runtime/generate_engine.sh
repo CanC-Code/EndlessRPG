@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# Purpose: Render pipeline with instanced details, sketch shader, and fixed orientations.
+# Purpose: Render pipeline with advanced LookAt camera, collision, and corrected kinematics.
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -23,6 +23,22 @@ struct Mat4 {
         r.m[0]=t/a; r.m[5]=t; r.m[10]=-(fr+n)/(fr-n); r.m[11]=-1.0f; r.m[14]=-(2.0f*fr*n)/(fr-n); 
         return r;
     }
+    // Advanced LookAt Matrix for Free Camera
+    static Mat4 lookAt(float ex, float ey, float ez, float cx, float cy, float cz, float ux, float uy, float uz) {
+        float fx = cx - ex, fy = cy - ey, fz = cz - ez;
+        float rlf = 1.0f / sqrt(fx*fx + fy*fy + fz*fz);
+        fx *= rlf; fy *= rlf; fz *= rlf;
+        float sx = fy*uz - fz*uy, sy = fz*ux - fx*uz, sz = fx*uy - fy*ux;
+        float rls = 1.0f / sqrt(sx*sx + sy*sy + sz*sz);
+        sx *= rls; sy *= rls; sz *= rls;
+        float ux2 = sy*fz - sz*fy, uy2 = sz*fx - sx*fz, uz2 = sx*fy - sy*fx;
+        Mat4 m = identity();
+        m.m[0] = sx; m.m[4] = sy; m.m[8] = sz;
+        m.m[1] = ux2; m.m[5] = uy2; m.m[9] = uz2;
+        m.m[2] = -fx; m.m[6] = -fy; m.m[10] = -fz;
+        m.m[12] = -(sx*ex + sy*ey + sz*ez); m.m[13] = -(ux2*ex + uy2*ey + uz2*ez); m.m[14] = -(-fx*ex + -fy*ey + -fz*ez);
+        return m;
+    }
     Mat4 mul(const Mat4& b) const {
         Mat4 r; for(int i=0; i<4; i++) for(int j=0; j<4; j++) for(int k=0; k<4; k++) r.m[i*4+j]+=m[k*4+j]*b.m[i*4+k]; return r;
     }
@@ -32,10 +48,8 @@ struct Mat4 {
     static Mat4 rotZ(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[1]=sin(a); r.m[4]=-sin(a); r.m[5]=cos(a); return r; }
 };
 
-float hash(float x, float z) {
-    float n = sin(x * 12.9898f + z * 78.233f) * 43758.5453f;
-    return n - floor(n);
-}
+float getTerrainHeight(float x, float z) { return sin(x * 0.4f) * cos(z * 0.4f) * 1.5f; }
+float hash(float x, float z) { float n = sin(x * 12.9898f + z * 78.233f) * 43758.5453f; return n - floor(n); }
 
 GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoTerrain;
 GLuint vaoRock, vaoGrass, vaoWheat;
@@ -59,29 +73,23 @@ extern "C" {
         const char* vS = "#version 300 es\n"
             "layout(location=0) in vec3 p; layout(location=1) in vec3 c; layout(location=2) in vec2 uv;\n"
             "uniform mat4 m,v,pr; uniform float isT;\n"
-            "out vec3 vc; out vec4 wPos; out vec4 sPos;\n"
+            "out vec3 vc; out vec4 wPos;\n"
             "void main(){\n"
             "  vec4 w=m*vec4(p,1.0);\n"
             "  if(isT>0.5) w.y += sin(w.x*0.4)*cos(w.z*0.4)*1.5;\n"
             "  wPos = w;\n"
-            "  sPos = pr*v*w;\n"
-            "  gl_Position=sPos; vc=c;\n"
+            "  gl_Position=pr*v*w; vc=c;\n"
             "}";
         
-        // PENCIL SKETCH SHADER: Applies a screen-space high-frequency crosshatch overlay to shadows
+        // Removed Hatch Shader. Using beautiful soft shading.
         const char* fS = "#version 300 es\n"
             "precision highp float;\n"
-            "in vec3 vc; in vec4 wPos; in vec4 sPos;\n"
+            "in vec3 vc; in vec4 wPos;\n"
             "uniform float isT;\n"
             "out vec4 o;\n"
             "void main(){\n"
             "  vec3 col = vc;\n"
-            "  if(isT>0.5) { col = vec3(0.5, 0.6, 0.4) * vc; }\n"
-            "  // Pencil Sketch / Hatching logic\n"
-            "  vec2 scr = sPos.xy / sPos.w;\n"
-            "  float hatch = sin(scr.x * 200.0 + scr.y * 200.0) * sin(scr.x * -200.0 + scr.y * 200.0);\n"
-            "  float luminance = dot(col, vec3(0.299, 0.587, 0.114));\n"
-            "  if(luminance < 0.4 && hatch < 0.0) { col *= 0.6; } // Draw pencil strokes in shadows\n"
+            "  if(isT>0.5) { col = vec3(0.4, 0.5, 0.3) * vc; }\n" // Organic ground
             "  o = vec4(col, 1.0);\n"
             "}";
 
@@ -97,7 +105,7 @@ extern "C" {
         vaoWheat = createVAO(M_WHEAT, N_WHEAT); vaoTree = createVAO(M_TREE, N_TREE);
         vaoTerrain = createVAO(M_TERRAIN, N_TERRAIN);
 
-        glClearColor(0.85f, 0.85f, 0.82f, 1.0f); // Paper/Parchment background for sketch vibe
+        glClearColor(0.5f, 0.7f, 0.9f, 1.0f); // Clean Sky
         glEnable(GL_DEPTH_TEST);
     }
 
@@ -130,16 +138,33 @@ extern "C" {
         glUniformMatrix4fv(glGetUniformLocation(prog,"pr"),1,GL_FALSE,proj.m);
         
         float jumpY = (jumpT > 0) ? 4.0f * jumpT * (1.0f - jumpT) : 0.0f;
-        float th = sin(px*0.4f)*cos(pz*0.4f)*1.5f;
+        float th = getTerrainHeight(px, pz);
 
-        float safeZoom = (zoom < 4.0f) ? 8.0f : zoom;
-        Mat4 v=Mat4::trans(0,0,-safeZoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-1-jumpY-th,-pz));
+        // --- CAMERA SYSTEM WITH TERRAIN COLLISION & FIRST PERSON SNAP ---
+        bool isFPS = (zoom < 1.5f); // Snap to First Person Mode
+        float safeZoom = isFPS ? 0.0f : zoom;
+        
+        // Target is the player's chest/head
+        float targetY = th + 1.2f + jumpY;
+        
+        // Calculate Camera Orbit Position
+        float camX = px - sin(yaw) * cos(pitch) * safeZoom;
+        float camZ = pz - cos(yaw) * cos(pitch) * safeZoom;
+        float camY = targetY + sin(pitch) * safeZoom;
+
+        // TERRAIN COLLISION: Push camera up if it clips into a hill!
+        float camTh = getTerrainHeight(camX, camZ);
+        if (camY < camTh + 0.5f && !isFPS) { camY = camTh + 0.5f; }
+        if (isFPS) { camY = th + 1.6f + jumpY; } // Eye level
+
+        // Apply True LookAt Matrix
+        Mat4 v = Mat4::lookAt(camX, camY, camZ, px, targetY, pz, 0, 1, 0);
         glUniformMatrix4fv(glGetUniformLocation(prog,"v"),1,GL_FALSE,v.m);
         
         GLint lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"isT");
         Mat4 tBase = Mat4::trans(px, th+1.0f+jumpY, pz).mul(Mat4::rotY(pf));
 
-        // 1. TERRAIN
+        // 1. RENDER TERRAIN
         glUniform1f(lt, 1.0f);
         for(int i=-3; i<=3; i++) for(int j=-3; j<=3; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
@@ -147,13 +172,12 @@ extern "C" {
             glUniformMatrix4fv(lm,1,GL_FALSE,tm.m); glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
 
-        // 2. PROCEDURAL CLUTTER (Trees, Grass, Wheat, Rocks)
+        // 2. RENDER CLUTTER
         glUniform1f(lt, 0.0f);
         for(int i=-16; i<=16; i++) for(int j=-16; j<=16; j++) {
             float tx=floor(px/2.f)*2.f+i*2.f, tz=floor(pz/2.f)*2.f+j*2.f;
             float hsh = hash(tx, tz);
-            float ty = sin(tx*0.4f)*cos(tz*0.4f)*1.5f;
-            
+            float ty = getTerrainHeight(tx, tz);
             Mat4 tm=Mat4::trans(tx, ty, tz).mul(Mat4::rotY(hsh * 6.28f));
             
             if(hsh > 0.95f) {
@@ -167,36 +191,39 @@ extern "C" {
             }
         }
 
-        // 3. CHARACTER RENDERING
-        glUniformMatrix4fv(lm,1,GL_FALSE,tBase.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
-        Mat4 mHead = tBase.mul(Mat4::trans(0, 0.8f, 0));
-        glUniformMatrix4fv(lm,1,GL_FALSE,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
+        // 3. RENDER CHARACTER
+        // In First-Person, we hide the Head and Torso to prevent internal clipping!
+        if (!isFPS) {
+            glUniformMatrix4fv(lm,1,GL_FALSE,tBase.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
+            Mat4 mHead = tBase.mul(Mat4::trans(0, 0.8f, 0));
+            glUniformMatrix4fv(lm,1,GL_FALSE,mHead.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
+        }
 
-        // RIGHT ARM & SHIELD (Fixed perfectly parallel block)
+        // RIGHT ARM & SHIELD (Fixed Block Alignment)
         float sRot = block ? -1.5f : (bashT > 0 ? -1.8f : sin(wt)*0.5f);
-        Mat4 mRArm = tBase.mul(Mat4::trans(-0.38f, 0.6f, 0)).mul(Mat4::rotX(sRot));
+        Mat4 mRArm = tBase.mul(Mat4::trans(-0.35f, 0.6f, 0)).mul(Mat4::rotX(sRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         
-        Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX(block ? -0.5f : 0.0f)); // Bend elbow when blocking
+        Mat4 mRFore = mRArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX(block ? -1.2f : 0.0f)); // Hard elbow bend to block!
         glUniformMatrix4fv(lm,1,GL_FALSE,mRFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        // Shield sits on the outside of the arm, oriented correctly using Blender's pre-rotation
-        Mat4 mShield = mRFore.mul(Mat4::trans(-0.1f, -0.2f, 0)); 
+        // Shield mounts on outside of forearm, facing outwards
+        Mat4 mShield = mRFore.mul(Mat4::trans(-0.1f, -0.15f, 0)).mul(Mat4::rotZ(1.57f)).mul(Mat4::rotY(-1.57f)); 
         glUniformMatrix4fv(lm,1,GL_FALSE,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
 
-        // LEFT ARM & SWORD (Fixed grip orientation)
+        // LEFT ARM & SWORD (Fixed Grip)
         float swRot = (slashT > 0) ? -2.5f * sin(slashT * 3.14f) : -sin(wt)*0.5f;
-        Mat4 mLArm = tBase.mul(Mat4::trans(0.38f, 0.6f, 0)).mul(Mat4::rotX(swRot));
+        Mat4 mLArm = tBase.mul(Mat4::trans(0.35f, 0.6f, 0)).mul(Mat4::rotX(swRot));
         glUniformMatrix4fv(lm,1,GL_FALSE,mLArm.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
 
-        Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX((slashT > 0) ? -0.5f : 0.0f)); 
+        Mat4 mLFore = mLArm.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX((slashT > 0) ? -0.8f : 0.0f)); 
         glUniformMatrix4fv(lm,1,GL_FALSE,mLFore.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        // Sword connects exactly at hand (trans 0, -0.35, 0) and points forward thanks to Blender pre-rotation
-        Mat4 mSword = mLFore.mul(Mat4::trans(0, -0.35f, 0));
+        // Sword held securely in hand, points forward on X-rotation
+        Mat4 mSword = mLFore.mul(Mat4::trans(0, -0.35f, 0)).mul(Mat4::rotX(1.57f));
         glUniformMatrix4fv(lm,1,GL_FALSE,mSword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
 
-        // LEGS
+        // LEGS (Only render if not in First Person, or look down to see them!)
         Mat4 mRLeg = tBase.mul(Mat4::trans(-0.15f, 0.0f, 0)).mul(Mat4::rotX(-sin(wt)*0.8f));
         glUniformMatrix4fv(lm,1,GL_FALSE,mRLeg.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         Mat4 mRLegLow = mRLeg.mul(Mat4::trans(0, -0.35f, 0));
