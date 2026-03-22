@@ -1,11 +1,10 @@
 #!/bin/bash
 # File: runtime/generate_assets.sh
-# Purpose: Modular, high-fidelity asset pipeline with absolute transform logic.
+# Purpose: Modular, version-proof asset pipeline.
 
 mkdir -p runtime/python
 mkdir -p app/src/main/cpp/models
 
-# --- MODULE 1: EXPORT UTILITIES ---
 cat << 'EOF' > runtime/python/exporter.py
 import bpy, bmesh, math
 
@@ -17,7 +16,6 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     clean()
     build_func()
     
-    # Ensure hard-voxel styling
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH':
             for poly in obj.data.polygons: poly.use_smooth = False
@@ -27,7 +25,7 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
     bpy.ops.object.join()
     
-    # CRITICAL FIX: Apply all scale/rotation before export to prevent engine deformation
+    # Absolute transforms prevent engine deformation
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     
     obj = bpy.context.object
@@ -55,59 +53,89 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
         f.write(f"const int N_{name} = {len(verts)//8};\n")
 EOF
 
-# --- MODULE 2: CHARACTER BUILDER ---
 cat << 'EOF' > runtime/python/builder_char.py
 import bpy
 
 def build_body():
-    # Voxel-style contiguous geometry mapping
-    bpy.ops.mesh.primitive_cube_add(scale=(0.3, 0.2, 0.4), location=(0,0,0.4)) # Torso
-    bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.1, 0.1), location=(0,0,0.85)) # Neck
-    bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.15), location=(0.35,0,0.65)) # L-Shoulder
-    bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.15), location=(-0.35,0,0.65)) # R-Shoulder
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.3, 0.2, 0.4)
+    bpy.context.object.location = (0, 0, 0.4)
+    
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.1, 0.1, 0.1)
+    bpy.context.object.location = (0, 0, 0.85)
+    
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.15, 0.15, 0.15)
+    bpy.context.object.location = (0.35, 0, 0.65)
+    
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.15, 0.15, 0.15)
+    bpy.context.object.location = (-0.35, 0, 0.65)
 
 def build_head():
-    bpy.ops.mesh.primitive_cube_add(scale=(0.22, 0.22, 0.22), location=(0,0,0.1))
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.22, 0.22, 0.22)
+    bpy.context.object.location = (0, 0, 0.1)
 
 def build_up_limb():
-    bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.1, 0.25), location=(0,0,-0.25))
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.1, 0.1, 0.25)
+    bpy.context.object.location = (0, 0, -0.25)
 
 def build_low_limb():
-    bpy.ops.mesh.primitive_cube_add(scale=(0.08, 0.08, 0.25), location=(0,0,-0.25))
-    bpy.ops.mesh.primitive_cube_add(scale=(0.12, 0.15, 0.12), location=(0,0,-0.5)) # Hand/Foot block
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.08, 0.08, 0.25)
+    bpy.context.object.location = (0, 0, -0.25)
+    
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.12, 0.15, 0.12)
+    bpy.context.object.location = (0, 0, -0.5)
 EOF
 
-# --- MODULE 3: ENVIRONMENT & WEAPONS BUILDER ---
 cat << 'EOF' > runtime/python/builder_env.py
 import bpy, math
 
 def build_sword():
-    bpy.ops.mesh.primitive_cube_add(scale=(0.04, 0.04, 0.8), location=(0,0,0.8)) # Blade
-    bpy.ops.mesh.primitive_cube_add(scale=(0.2, 0.06, 0.05), location=(0,0,0.1)) # Guard
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.04, 0.04, 0.8)
+    bpy.context.object.location = (0, 0, 0.8)
+    
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.2, 0.06, 0.05)
+    bpy.context.object.location = (0, 0, 0.1)
 
 def build_shield():
-    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.45, depth=0.08)
-    bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.06), location=(0,0,0.06))
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16)
+    bpy.context.object.scale = (0.45, 0.45, 0.04)
+    
+    bpy.ops.mesh.primitive_cube_add()
+    bpy.context.object.scale = (0.15, 0.15, 0.06)
+    bpy.context.object.location = (0, 0, 0.06)
 
 def build_terrain():
-    # Optimized to 16 subdivisions to prevent NDK memory crashing
-    bpy.ops.mesh.primitive_grid_add(size=16, x_subdivisions=16, y_subdivisions=16)
+    bpy.ops.mesh.primitive_grid_add(x_subdivisions=16, y_subdivisions=16)
+    bpy.context.object.scale = (8.0, 8.0, 1.0)
 
 def build_tree():
-    def branch(loc, angle_x, angle_y, level, scale):
+    def branch(loc, angle_x, angle_y, level, scale_fac):
         if level == 0:
-            bpy.ops.mesh.primitive_cube_add(scale=(0.6*scale, 0.6*scale, 0.6*scale), location=loc)
+            bpy.ops.mesh.primitive_cube_add()
+            bpy.context.object.scale = (0.6*scale_fac, 0.6*scale_fac, 0.6*scale_fac)
+            bpy.context.object.location = loc
             return
-        bpy.ops.mesh.primitive_cube_add(scale=(0.1*scale, 0.1*scale, 1.0*scale), location=loc)
+        bpy.ops.mesh.primitive_cube_add()
         b = bpy.context.object
+        b.scale = (0.1*scale_fac, 0.1*scale_fac, 1.0*scale_fac)
+        b.location = loc
         b.rotation_euler = (angle_x, angle_y, 0)
-        next_loc = (loc[0]+math.sin(angle_y)*scale*2, loc[1]-math.sin(angle_x)*scale*2, loc[2]+math.cos(angle_x)*scale*2)
-        branch(next_loc, angle_x+0.5, angle_y+0.4, level-1, scale*0.7)
-        branch(next_loc, angle_x-0.4, angle_y-0.5, level-1, scale*0.7)
+        
+        next_loc = (loc[0]+math.sin(angle_y)*scale_fac*2, loc[1]-math.sin(angle_x)*scale_fac*2, loc[2]+math.cos(angle_x)*scale_fac*2)
+        branch(next_loc, angle_x+0.5, angle_y+0.4, level-1, scale_fac*0.7)
+        branch(next_loc, angle_x-0.4, angle_y-0.5, level-1, scale_fac*0.7)
     branch((0,0,1.0), 0, 0, 3, 1.0)
 EOF
 
-# --- MODULE 4: MAIN EXECUTION ---
 cat << 'EOF' > runtime/python/main_bake.py
 import sys
 sys.path.append('runtime/python')
