@@ -7,29 +7,56 @@ cat << 'EOF' > app/src/main/cpp/engine.cpp
 #include <cmath>
 #include <vector>
 
-// --- MATH & TERRAIN UTILS ---
+// --- Math Utilities ---
 struct vec2 { float x, y; };
 struct vec3 { float x, y, z; };
 inline float dot(vec2 a, vec2 b) { return a.x*b.x + a.y*b.y; }
 inline float fract(float x) { return x - std::floor(x); }
 inline float mix(float a, float b, float t) { return a + t * (b - a); }
+inline vec3 normalize(vec3 v) { float l = std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z); return {v.x/l, v.y/l, v.z/l}; }
+inline vec3 cross(vec3 a, vec3 b) { return {a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x}; }
 
-float random(vec2 st) { return fract(std::sin(dot(st, {12.9898f, 78.233f})) * 43758.5453123f); }
+struct mat4 { float m[16] = {0}; mat4() { m[0]=m[5]=m[10]=m[15]=1.0f; } };
+mat4 perspective(float fov, float aspect, float near, float far) {
+    mat4 res; float f = 1.0f / std::tan(fov / 2.0f);
+    res.m[0] = f / aspect; res.m[5] = f; res.m[10] = (far + near) / (near - far);
+    res.m[11] = -1.0f; res.m[14] = (2.0f * far * near) / (near - far); res.m[15] = 0.0f;
+    return res;
+}
+mat4 lookAt(vec3 eye, vec3 center, vec3 up) {
+    vec3 f = normalize({center.x - eye.x, center.y - eye.y, center.z - eye.z});
+    vec3 s = normalize(cross(f, up)); vec3 u = cross(s, f);
+    mat4 res;
+    res.m[0] = s.x; res.m[4] = s.y; res.m[8] = s.z;
+    res.m[1] = u.x; res.m[5] = u.y; res.m[9] = u.z;
+    res.m[2] = -f.x; res.m[6] = -f.y; res.m[10] = -f.z;
+    res.m[12] = -(s.x*eye.x + s.y*eye.y + s.z*eye.z);
+    res.m[13] = -(u.x*eye.x + u.y*eye.y + u.z*eye.z);
+    res.m[14] = (f.x*eye.x + f.y*eye.y + f.z*eye.z);
+    return res;
+}
+mat4 multiply(const mat4& a, const mat4& b) {
+    mat4 r;
+    for(int i=0; i<4; i++) for(int j=0; j<4; j++)
+        r.m[i*4+j] = a.m[i*4+0]*b.m[0*4+j] + a.m[i*4+1]*b.m[1*4+j] + a.m[i*4+2]*b.m[2*4+j] + a.m[i*4+3]*b.m[3*4+j];
+    return r;
+}
+
+// --- Procedural fBm Terrain ---
+float random(vec2 st) { return fract(std::sin(dot(st, {12.9898f, 78.233f})) * 43758.5f); }
 float noise(vec2 st) {
-    vec2 i = {std::floor(st.x), std::floor(st.y)};
-    vec2 f = {st.x - i.x, st.y - i.y};
-    float a = random(i), b = random({i.x + 1.0f, i.y});
-    float c = random({i.x, i.y + 1.0f}), d = random({i.x + 1.0f, i.y + 1.0f});
+    vec2 i = {std::floor(st.x), std::floor(st.y)}; vec2 f = {st.x - i.x, st.y - i.y};
+    float a = random(i), b = random({i.x + 1.0f, i.y}), c = random({i.x, i.y + 1.0f}), d = random({i.x + 1.0f, i.y + 1.0f});
     vec2 u = {f.x*f.x*(3.0f-2.0f*f.x), f.y*f.y*(3.0f-2.0f*f.y)};
     return mix(a, b, u.x) + (c - a)*u.y*(1.0f - u.x) + (d - b)*u.x*u.y;
 }
 float fbm(vec2 st) {
     float v = 0.0f, a = 0.5f;
-    for (int i = 0; i < 5; i++) { v += a * noise(st); st.x *= 2.0f; st.y *= 2.0f; a *= 0.5f; }
+    for (int i=0; i<5; i++) { v += a * noise(st); st.x *= 2.0f; st.y *= 2.0f; a *= 0.5f; }
     return v;
 }
 
-// --- SHADERS ---
+// --- Shaders ---
 const char* vShaderStr = R"(#version 300 es
 layout(location = 0) in vec3 aPos;
 uniform mat4 u_MVP;
@@ -45,51 +72,45 @@ precision highp float;
 in float v_Height;
 out vec4 FragColor;
 void main() {
-    // Pencil Art Depth / Height shading
-    float shade = 0.95; // Paper background
-    if (v_Height < 0.5) shade = 0.3; // Heavy pencil deep in valleys
-    else if (v_Height < 1.5) shade = 0.6; // Mid-tone hatching on slopes
+    float shade = 0.95; // Paper base
+    if (v_Height < 0.8) shade = 0.3; // Heavy pencil deep in valleys
+    else if (v_Height < 1.8) shade = 0.6; // Mid-tone hatching on slopes
     
     vec3 graphiteColor = vec3(0.2, 0.2, 0.22);
     vec3 paperColor = vec3(0.95, 0.95, 0.92);
-    vec3 finalPencil = mix(graphiteColor, paperColor, shade);
-    
-    FragColor = vec4(finalPencil, 1.0);
+    FragColor = vec4(mix(graphiteColor, paperColor, shade), 1.0);
 }
 )";
 
-// --- GLOBALS ---
+// --- Game State ---
 GLuint program, vao, vbo, ebo;
 int indexCount = 0;
 float aspect = 1.0f;
-float playerX = 0.0f, playerZ = 0.0f; // Player position
 
-GLuint compileShader(GLenum type, const char* src) {
-    GLuint s = glCreateShader(type);
-    glShaderSource(s, 1, &src, nullptr);
-    glCompileShader(s);
-    return s;
+// Player & Camera logic
+float pX = 0.0f, pZ = 0.0f;
+float inputDx = 0.0f, inputDy = 0.0f;
+float camYaw = 0.0f, camZoom = 15.0f;
+
+GLuint compile(GLenum type, const char* src) {
+    GLuint s = glCreateShader(type); glShaderSource(s, 1, &src, nullptr); glCompileShader(s); return s;
 }
 
-// --- JNI BRIDGE IMPLEMENTATIONS ---
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv* env, jobject obj) {
         program = glCreateProgram();
-        glAttachShader(program, compileShader(GL_VERTEX_SHADER, vShaderStr));
-        glAttachShader(program, compileShader(GL_FRAGMENT_SHADER, fShaderStr));
+        glAttachShader(program, compile(GL_VERTEX_SHADER, vShaderStr));
+        glAttachShader(program, compile(GL_FRAGMENT_SHADER, fShaderStr));
         glLinkProgram(program);
 
-        // Build seamless terrain mesh
-        std::vector<float> verts;
-        std::vector<uint16_t> idx;
-        const int size = 60;
-        const float scale = 0.3f;
+        std::vector<float> verts; std::vector<uint16_t> idx;
+        const int size = 80; const float scale = 0.5f;
         
         for (int z = 0; z < size; z++) {
             for (int x = 0; x < size; x++) {
                 float wx = (x - size/2) * scale;
                 float wz = (z - size/2) * scale;
-                float wy = fbm({wx * 0.5f, wz * 0.5f}) * 4.0f; // Terrain height
+                float wy = fbm({wx * 0.3f, wz * 0.3f}) * 6.0f; // Taller cliffs
                 verts.push_back(wx); verts.push_back(wy); verts.push_back(wz);
             }
         }
@@ -102,54 +123,47 @@ extern "C" {
         }
         indexCount = idx.size();
 
-        glGenVertexArrays(1, &vao);
-        glGenBuffers(1, &vbo);
-        glGenBuffers(1, &ebo);
-
+        glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo); glGenBuffers(1, &ebo);
         glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(uint16_t), idx.data(), GL_STATIC_DRAW);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo); glBufferData(GL_ARRAY_BUFFER, verts.size()*sizeof(float), verts.data(), GL_STATIC_DRAW);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo); glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size()*sizeof(uint16_t), idx.data(), GL_STATIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3*sizeof(float), (void*)0); glEnableVertexAttribArray(0);
 
-        glClearColor(0.95f, 0.95f, 0.92f, 1.0f); // Paper white background
+        glClearColor(0.95f, 0.95f, 0.92f, 1.0f);
         glEnable(GL_DEPTH_TEST);
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv* env, jobject obj, jint width, jint height) {
-        glViewport(0, 0, width, height);
-        aspect = (float)width / (float)height;
+        glViewport(0, 0, width, height); aspect = (float)width / (float)height;
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv* env, jobject obj) {
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glUseProgram(program);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); glUseProgram(program);
 
-        // Calculate simple Perspective Matrix
-        float fov = 1.0f / std::tan(1.047f / 2.0f); // 60 degrees
-        float m[16] = {0};
-        m[0] = fov / aspect; m[5] = fov; m[10] = -1.02f; m[11] = -1.0f; m[14] = -0.2f;
+        // Update player position based on joystick
+        float s = std::sin(camYaw), c = std::cos(camYaw);
+        pX += (inputDx * c - inputDy * s) * 0.1f;
+        pZ += (inputDx * s + inputDy * c) * 0.1f;
 
-        // Apply camera offset based on player movement
-        m[12] = -playerX; // Move left/right
-        m[13] = -2.0f;    // Camera height
-        m[14] -= 8.0f;    // Pull camera back
+        // Interactive Camera Math
+        mat4 proj = perspective(1.047f, aspect, 0.1f, 100.0f);
+        float eyeX = pX - std::sin(camYaw) * camZoom;
+        float eyeZ = pZ - std::cos(camYaw) * camZoom;
+        float eyeY = fbm({eyeX * 0.3f, eyeZ * 0.3f}) * 6.0f + (camZoom * 0.5f); // Keep camera above ground
         
-        glUniformMatrix4fv(glGetUniformLocation(program, "u_MVP"), 1, GL_FALSE, m);
-
-        glBindVertexArray(vao);
-        glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_SHORT, 0);
+        mat4 view = lookAt({eyeX, eyeY, eyeZ}, {pX, fbm({pX * 0.3f, pZ * 0.3f}) * 6.0f, pZ}, {0.0f, 1.0f, 0.0f});
+        mat4 mvp = multiply(proj, view);
+        
+        glUniformMatrix4fv(glGetUniformLocation(program, "u_MVP"), 1, GL_FALSE, mvp.m);
+        glBindVertexArray(vao); glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_SHORT, 0);
     }
 
-    // THE FIX FOR THE CRASHES: Proper input receivers
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_updateInput(JNIEnv* env, jobject obj, jfloat dx, jfloat dy) {
-        playerX += dx * 0.1f; // Moves the world horizontally based on joystick
+        inputDx = dx; inputDy = dy;
     }
-    
-    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv* env, jobject obj, jint actionId) {
-        // Safe endpoint for button presses (prevents UnsatisfiedLinkError crashes)
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_updateCamera(JNIEnv* env, jobject obj, jfloat yaw, jfloat zoom) {
+        camYaw = yaw; camZoom = zoom;
     }
+    JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv* env, jobject obj, jint actionId) {}
 }
 EOF
