@@ -1,5 +1,6 @@
 #!/bin/bash
-echo "Starting Full-Fledged RPG Build Pipeline..."
+# File: build_all.sh
+# Purpose: Master Execution Pipeline for the Enhanced 3D RPG
 
 mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp/models
@@ -16,5 +17,3 @@ chmod +x runtime/generate_engine.sh
 ./scripts/setup_project.sh
 ./runtime/generate_assets.sh
 ./runtime/generate_engine.sh
-
-echo "Project Generation Complete. Ready for Gradle Build!"
