@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_assets.sh
-# Purpose: Modular high-fidelity asset generation with absolute transforms to prevent engine deformation.
+# Purpose: High-fidelity, organic asset generation with accurate pivot origins.
 
 mkdir -p runtime/python
 mkdir -p app/src/main/cpp/models
@@ -17,11 +17,9 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     clean()
     build_func()
     
-    # Smooth shading for realistic models
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH':
-            for poly in obj.data.polygons: 
-                poly.use_smooth = True
+            for poly in obj.data.polygons: poly.use_smooth = True
             
     bpy.ops.object.select_all(action='SELECT')
     objs = bpy.context.selected_objects
@@ -30,17 +28,11 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     bpy.context.view_layer.objects.active = objs[0]
     bpy.ops.object.join()
     
-    # CRITICAL: Apply scale so the engine's animation matrices don't skew the models
+    # Apply transforms so origin resets perfectly for C++ engine
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
     
-    obj = bpy.context.object
-    mesh = obj.data
-    
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bmesh.ops.triangulate(bm, faces=bm.faces)
-    bm.to_mesh(mesh)
-    bm.free()
+    obj = bpy.context.object; mesh = obj.data
+    bm = bmesh.new(); bm.from_mesh(mesh); bmesh.ops.triangulate(bm, faces=bm.faces); bm.to_mesh(mesh); bm.free()
     
     verts = []
     mesh.calc_loop_triangles()
@@ -48,7 +40,8 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     height = max((v.co.z for v in mesh.vertices), default=1) - min_z
     
     for tri in mesh.loop_triangles:
-        lum = 0.5 + max(0.0, tri.normal.z * 0.5) + max(0.0, tri.normal.x * 0.2)
+        # Crisp directional lighting baked into vertex colors
+        lum = 0.4 + max(0.0, tri.normal.z * 0.6) + max(0.0, tri.normal.x * 0.2)
         for loop_idx in tri.loops:
             v = mesh.vertices[mesh.loops[loop_idx].vertex_index]
             ao = 0.5 + (0.5 * ((v.co.z - min_z) / height)) if height > 0 else 1.0
@@ -60,61 +53,86 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
         f.write(f"const int N_{name} = {len(verts)//8};\n")
 EOF
 
-# MODULE 2: The Character Builder (Realistic Anatomy)
+# MODULE 2: Character Builder
 cat << 'EOF' > runtime/python/builder_char.py
 import bpy
-
 def build_body():
-    # Integrated Torso and Anatomy (No floating parts)
     bpy.ops.mesh.primitive_cylinder_add(radius=0.25, depth=0.6, location=(0,0,0.3))
     bpy.ops.mesh.primitive_cylinder_add(radius=0.1, depth=0.15, location=(0,0,0.65)) # Neck
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.12, location=(0.32,0,0.55)) # L-Shoulder
     bpy.ops.mesh.primitive_uv_sphere_add(radius=0.12, location=(-0.32,0,0.55)) # R-Shoulder
-
-def build_head(): 
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.2, location=(0,0,0.1))
-
+def build_head(): bpy.ops.mesh.primitive_uv_sphere_add(radius=0.2, location=(0,0,0.1))
 def build_up_limb(): 
     bpy.ops.mesh.primitive_cylinder_add(radius=0.08, depth=0.35, location=(0,0,-0.175))
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.09, location=(0,0,-0.35)) # Elbow/Knee Joint
-
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.09, location=(0,0,-0.35))
 def build_low_limb():
     bpy.ops.mesh.primitive_cylinder_add(radius=0.07, depth=0.35, location=(0,0,-0.175))
-    bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.12, 0.08), location=(0,0,-0.35)) # Hand/Foot
+    bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.12, 0.08), location=(0,0,-0.35))
 EOF
 
-# MODULE 3: Environment & Realistic Trees
+# MODULE 3: Environment, Details & Weapons
 cat << 'EOF' > runtime/python/builder_env.py
-import bpy, math
+import bpy, math, random
 
 def build_sword():
-    bpy.ops.mesh.primitive_cylinder_add(radius=0.03, depth=1.0, location=(0,0,0.5))
-    bpy.ops.mesh.primitive_cube_add(scale=(0.2, 0.04, 0.04), location=(0,0,0.1)) # Guard
+    # Origin (0,0,0) is placed exactly at the hand grip
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.02, depth=0.2, location=(0,0,-0.1)) # Grip
+    bpy.ops.mesh.primitive_cube_add(scale=(0.2, 0.04, 0.04), location=(0,0,0.05)) # Guard
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.03, depth=1.0, location=(0,0,0.55)) # Blade
+    # Pre-rotate sword so it points forward when attached to the arm
+    bpy.ops.transform.rotate(value=1.5708, orient_axis='X')
 
 def build_shield():
-    bpy.ops.mesh.primitive_cylinder_add(vertices=24, radius=0.45, depth=0.05)
-    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.12, location=(0,0,0.03)) # Shield Boss
+    # Pre-rotated to face perfectly outward on the forearm
+    bpy.ops.mesh.primitive_cylinder_add(vertices=24, radius=0.45, depth=0.05, location=(0,0.1,0))
+    bpy.ops.transform.rotate(value=1.5708, orient_axis='X')
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.12, location=(0,0.15,0)) 
 
-def build_terrain():
-    bpy.ops.mesh.primitive_grid_add(size=16, x_subdivisions=24, y_subdivisions=24)
+def build_rock():
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=1, radius=0.4)
+    obj = bpy.context.object
+    obj.scale = (random.uniform(0.8, 1.2), random.uniform(0.6, 1.0), random.uniform(0.4, 0.8))
+
+def build_grass():
+    # 3 intersecting curved blades for realistic volume
+    for i in range(3):
+        bpy.ops.mesh.primitive_cone_add(vertices=4, radius1=0.05, depth=0.5, location=(0,0,0.25))
+        bpy.ops.transform.rotate(value=random.uniform(-0.3, 0.3), orient_axis='X')
+        bpy.ops.transform.rotate(value=random.uniform(-0.3, 0.3), orient_axis='Y')
+        bpy.ops.transform.rotate(value=i * 2.09, orient_axis='Z')
+
+def build_wheat():
+    # Stalk and seed head
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.02, depth=0.8, location=(0,0,0.4))
+    for i in range(5):
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=0.04, location=(0, 0, 0.6 + (i*0.05)))
+        bpy.context.object.scale = (1.0, 1.0, 1.5)
+
+def build_terrain(): bpy.ops.mesh.primitive_grid_add(size=16, x_subdivisions=16, y_subdivisions=16)
 
 def build_tree():
+    random.seed(42) # Consistent realistic tree
     def branch(loc, angle_x, angle_y, level, scale):
         if level == 0:
-            # Needles / Leaves
-            bpy.ops.mesh.primitive_ico_sphere_add(radius=0.8*scale, subdivisions=2, location=loc)
+            bpy.ops.mesh.primitive_ico_sphere_add(radius=0.9*scale, subdivisions=2, location=loc)
+            # Add a slight squish to leaves for organic look
+            bpy.context.object.scale = (1.0, 1.0, 0.8)
             return
         
-        # Branch
-        bpy.ops.mesh.primitive_cylinder_add(radius=0.1*scale, depth=2.0*scale, location=loc)
+        # Tapered branch
+        bpy.ops.mesh.primitive_cone_add(radius1=0.15*scale, radius2=0.08*scale, depth=2.0*scale, location=loc)
         b = bpy.context.object
         b.rotation_euler = (angle_x, angle_y, 0)
         
-        next_loc = (loc[0]+math.sin(angle_y)*scale, loc[1]-math.sin(angle_x)*scale, loc[2]+math.cos(angle_x)*math.cos(angle_y)*scale)
-        branch(next_loc, angle_x+0.5, angle_y+0.4, level-1, scale*0.7)
-        branch(next_loc, angle_x-0.4, angle_y-0.5, level-1, scale*0.7)
+        next_loc = (loc[0]+math.sin(angle_y)*scale*1.8, loc[1]-math.sin(angle_x)*scale*1.8, loc[2]+math.cos(angle_x)*math.cos(angle_y)*scale*1.8)
         
-    branch((0,0,1.0), 0, 0, 3, 1.0)
+        # Randomized branching angles for high realism
+        branch(next_loc, angle_x + random.uniform(0.3, 0.7), angle_y + random.uniform(0.2, 0.5), level-1, scale*0.7)
+        branch(next_loc, angle_x - random.uniform(0.3, 0.7), angle_y - random.uniform(0.2, 0.5), level-1, scale*0.7)
+        if level > 1 and random.random() > 0.3:
+            branch(next_loc, angle_x + random.uniform(-0.2, 0.2), angle_y + random.uniform(-0.5, 0.5), level-1, scale*0.6)
+
+    branch((0,0,1.0), 0, 0, 4, 1.0) # Deep 4-level recursion
 EOF
 
 # MODULE 4: Main Execution
@@ -125,8 +143,7 @@ from exporter import bake_and_export
 from builder_char import *
 from builder_env import *
 
-with open("app/src/main/cpp/models/AllModels.h", "w") as f: 
-    f.write("#pragma once\n")
+with open("app/src/main/cpp/models/AllModels.h", "w") as f: f.write("#pragma once\n")
 
 bake_and_export("TORSO", 0.7, 0.7, 0.75, build_body, "app/src/main/cpp/models/AllModels.h")
 bake_and_export("HEAD", 0.9, 0.8, 0.7, build_head, "app/src/main/cpp/models/AllModels.h")
@@ -134,8 +151,11 @@ bake_and_export("UP_LIMB", 0.5, 0.5, 0.55, build_up_limb, "app/src/main/cpp/mode
 bake_and_export("LOW_LIMB", 0.5, 0.5, 0.55, build_low_limb, "app/src/main/cpp/models/AllModels.h")
 bake_and_export("SWORD", 0.8, 0.85, 0.9, build_sword, "app/src/main/cpp/models/AllModels.h")
 bake_and_export("SHIELD", 0.4, 0.3, 0.2, build_shield, "app/src/main/cpp/models/AllModels.h")
+bake_and_export("ROCK", 0.5, 0.5, 0.55, build_rock, "app/src/main/cpp/models/AllModels.h")
+bake_and_export("GRASS", 0.3, 0.7, 0.3, build_grass, "app/src/main/cpp/models/AllModels.h")
+bake_and_export("WHEAT", 0.8, 0.7, 0.3, build_wheat, "app/src/main/cpp/models/AllModels.h")
 bake_and_export("TREE", 0.15, 0.4, 0.15, build_tree, "app/src/main/cpp/models/AllModels.h")
-bake_and_export("TERRAIN", 1.0, 1.0, 1.0, build_terrain, "app/src/main/cpp/models/AllModels.h", True)
+bake_and_export("TERRAIN", 0.9, 0.9, 0.9, build_terrain, "app/src/main/cpp/models/AllModels.h", True)
 EOF
 
 blender --background --python runtime/python/main_bake.py
