@@ -1,5 +1,6 @@
 #!/bin/bash
-echo "Scaffolding Android Framework and Advanced GUI..."
+# File: scripts/setup_project.sh
+# Purpose: UI, Activity, and Camera Initialization. Corrects initial boot camera angle and pitch limits.
 
 cat << 'EOF' > settings.gradle
 pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
@@ -93,6 +94,7 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         </LinearLayout>
         <Button android:id="@+id/btn_close_inv" android:layout_width="50dp" android:layout_height="50dp" android:layout_gravity="top|right" android:text="X" android:background="#F44336" android:textColor="#FFF" android:textStyle="bold"/>
     </LinearLayout>
+
 </RelativeLayout>
 EOF
 
@@ -111,7 +113,9 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
     private View knob, menuOverlay, invOverlay;
     private float tX = 0f, tY = 0f;
-    private float camYaw = 0.7f, camPitch = 0.5f, camZoom = 25.0f;
+    
+    // CAMERA FIX: Initial Pitch 0.8f looks down at the character natively, Zoom reduced for tighter view.
+    private float camYaw = 0.7f, camPitch = 0.8f, camZoom = 12.0f; 
     private float lastX, lastY;
     private long shieldDownTime = 0;
     private ScaleGestureDetector zoomer;
@@ -145,7 +149,7 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
 
         zoomer = new ScaleGestureDetector(this, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
             @Override public boolean onScale(ScaleGestureDetector d) {
-                camZoom = Math.max(5f, Math.min(60f, camZoom / d.getScaleFactor()));
+                camZoom = Math.max(5f, Math.min(40f, camZoom / d.getScaleFactor()));
                 return true;
             }
         });
@@ -156,7 +160,8 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
                 if (e.getAction() == MotionEvent.ACTION_DOWN) { lastX = e.getX(); lastY = e.getY(); }
                 else if (e.getAction() == MotionEvent.ACTION_MOVE) {
                     camYaw += (e.getX() - lastX) * 0.01f;
-                    camPitch = Math.max(-0.2f, Math.min(1.5f, camPitch + (e.getY() - lastY) * 0.01f));
+                    // CAMERA FIX: Pitch bounded from -0.1f (looking up at sky) to 1.5f (looking straight down at feet)
+                    camPitch = Math.max(-0.1f, Math.min(1.5f, camPitch + (e.getY() - lastY) * 0.01f));
                     lastX = e.getX(); lastY = e.getY();
                 }
             }
@@ -182,7 +187,6 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
         findViewById(R.id.btn_jump).setOnClickListener(v -> triggerAction(4));
         findViewById(R.id.btn_action).setOnClickListener(v -> triggerAction(5));
 
-        // Shield Tap vs Hold Logic
         findViewById(R.id.btn_shield).setOnTouchListener((v, e) -> {
             if (e.getAction() == MotionEvent.ACTION_DOWN) {
                 shieldDownTime = System.currentTimeMillis();
@@ -190,7 +194,7 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
             } else if (e.getAction() == MotionEvent.ACTION_UP) {
                 triggerAction(3); // Block OFF
                 if (System.currentTimeMillis() - shieldDownTime < 300) {
-                    triggerAction(6); // Shield Bash (Quick Tap)
+                    triggerAction(6); // Shield Bash
                 }
             }
             return true;
