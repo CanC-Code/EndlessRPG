@@ -1,8 +1,5 @@
 #!/bin/bash
-# File: runtime/generate_engine.sh
-# Purpose: Exact Kinematic Mapping, Deep Far-Plane Culling Fix, Dynamic Timed Combos.
-
-echo "Injecting Physics Engine and Kinematic Constraints..."
+echo "Injecting Physics Engine with Jump Gravity and Fixed Rotation..."
 
 cat << 'EOF' > app/src/main/cpp/CMakeLists.txt
 cmake_minimum_required(VERSION 3.22.1)
@@ -17,8 +14,6 @@ cat << 'EOF' > app/src/main/cpp/native-lib.cpp
 #include <cmath>
 #include <chrono>
 #include "models/AllModels.h"
-
-// 
 
 struct Mat4 {
     float m[16] = {0};
@@ -37,15 +32,17 @@ struct Mat4 {
     static Mat4 rotZ(float a) { Mat4 r=identity(); r.m[0]=cos(a); r.m[1]=sin(a); r.m[4]=-sin(a); r.m[5]=cos(a); return r; }
 };
 
-// Displaces terrain geometry mathematically, e.g., $y = \sin(x \cdot 0.4) \cdot \cos(z \cdot 0.4) \cdot 1.5$
 float getTerrainHeight(float x, float z) {
     return sin(x * 0.4f) * cos(z * 0.4f) * 1.5f;
 }
 
-GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoTerrain;
-float px=0, pz=0, pf=0, wt=0, st=0;
+GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoChest, vaoCloud, vaoTerrain;
+float px=0, py=0, pz=0, pf=0, wt=0, st=0;
+float vy = 0.0f; // Vertical Velocity
+bool isGrounded = true;
 int comboState = 0; 
 volatile bool block=false;
+volatile bool shieldBash=false;
 Mat4 proj;
 auto lastTime = std::chrono::steady_clock::now();
 
@@ -60,7 +57,6 @@ GLuint createVAO(const float* d, int n) {
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onCreated(JNIEnv*, jobject) {
         const char* vS = "#version 300 es\nlayout(location=0) in vec3 p; layout(location=1) in vec3 c; uniform mat4 m,v,pr; uniform float isT; out vec3 vc; out vec4 viewPos; void main(){ vec4 w=m*vec4(p,1.0); if(isT>0.5) w.y += sin(w.x*0.4)*cos(w.z*0.4)*1.5; viewPos=v*w; gl_Position=pr*viewPos; vc=c; }";
-        // Distance Fog blends geometry into the sky color seamlessly
         const char* fS = "#version 300 es\nprecision mediump float; in vec3 vc; in vec4 viewPos; out vec4 o; void main(){ float dist=length(viewPos.xyz); float fog=clamp((dist-20.0)/80.0, 0.0, 1.0); vec3 sky=vec3(0.5,0.7,0.9); o=vec4(mix(vc,sky,fog), 1.0); }";
         
         GLuint vs=glCreateShader(GL_VERTEX_SHADER); glShaderSource(vs,1,&vS,0); glCompileShader(vs);
@@ -71,78 +67,101 @@ extern "C" {
         vaoTorso=createVAO(M_TORSO, N_TORSO); vaoHead=createVAO(M_HEAD, N_HEAD);
         vaoUpLimb=createVAO(M_UP_LIMB, N_UP_LIMB); vaoLowLimb=createVAO(M_LOW_LIMB, N_LOW_LIMB);
         vaoSword=createVAO(M_SWORD, N_SWORD); vaoShield=createVAO(M_SHIELD, N_SHIELD);
-        vaoTree=createVAO(M_TREE, N_TREE); vaoTerrain=createVAO(M_TERRAIN, N_TERRAIN);
+        vaoTree=createVAO(M_TREE, N_TREE); vaoChest=createVAO(M_CHEST, N_CHEST);
+        vaoCloud=createVAO(M_CLOUD, N_CLOUD); vaoTerrain=createVAO(M_TERRAIN, N_TERRAIN);
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onChanged(JNIEnv*, jobject, jint w, jint h) {
-        glViewport(0,0,w,h); 
-        // FIXED FAR PLANE: Extended from 100 to 300. Eliminates "white area" clipping when looking up.
-        proj=Mat4::perspective(1.0f, (float)w/h, 0.1f, 300.0f);
+        glViewport(0,0,w,h); proj=Mat4::perspective(1.0f, (float)w/h, 0.1f, 300.0f);
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_onDraw(JNIEnv*, jobject, jfloat ix, jfloat iy, jfloat yaw, jfloat pitch, jfloat zoom) {
         auto currentTime = std::chrono::steady_clock::now();
         float dt = std::chrono::duration<float>(currentTime - lastTime).count();
         lastTime = currentTime;
+        static float globalTime = 0; globalTime += dt;
 
         float speed = 0.0f;
         if(fabs(ix)>0.05f || fabs(iy)>0.05f) {
-            float s=sin(yaw), c=cos(yaw), dx=ix*c-(-iy)*s, dz=ix*s+(-iy)*c;
-            px+=dx*5.0f*dt; pz-=dz*5.0f*dt; pf=atan2(-dx,dz); 
-            wt+=12.0f*dt; speed = 1.0f;
+            float s=sin(yaw), c=cos(yaw);
+            float dx=ix*c - (-iy)*s; 
+            float dz=ix*s + (-iy)*c;
+            px+=dx*6.0f*dt; pz-=dz*6.0f*dt; 
+            
+            // FIXED ROTATION: Atan2 logic aligned with actual movement vector
+            pf=atan2(dx, dz); 
+            wt+=15.0f*dt; speed = 1.0f;
         } else { wt = 0; }
 
-        // SNAPPY COMBOS: Advanced animation timing based on real Delta Time
-        if(comboState > 0) { 
-            st += 10.0f * dt; 
-            if(st > 3.14f) { comboState = 0; st = 0; } 
+        // JUMP PHYSICS & GRAVITY
+        float groundY = getTerrainHeight(px, pz);
+        py += vy * dt;
+        vy -= 20.0f * dt; // Gravity
+        
+        if (py <= groundY) {
+            py = groundY;
+            vy = 0.0f;
+            isGrounded = true;
         }
 
-        glClearColor(0.5f, 0.7f, 0.9f, 1.0f); // Same as Fragment Shader Fog
+        // SWORD/SHIELD ANIMATION PROGRESS
+        if(comboState > 0 || shieldBash) { 
+            st += 12.0f * dt; 
+            if(st > 3.14f) { comboState = 0; shieldBash = false; st = 0; } 
+        }
+
+        glClearColor(0.5f, 0.7f, 0.9f, 1.0f); 
         glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); 
-        
         GLint lp=glGetUniformLocation(prog,"pr"), lv=glGetUniformLocation(prog,"v"), lm=glGetUniformLocation(prog,"m"), lt=glGetUniformLocation(prog,"isT");
         glUniformMatrix4fv(lp,1,0,proj.m);
         
-        // ANCHORING: Calculate base ground height, place hips 0.8f (leg length) above it
-        float py = getTerrainHeight(px, pz);
         float hipHeight = py + 0.8f + (sin(wt*2.0f)*0.05f * speed);
         Mat4 v=Mat4::trans(0,0,-zoom).mul(Mat4::rotX(-pitch)).mul(Mat4::rotY(-yaw)).mul(Mat4::trans(-px,-(hipHeight+0.5f),-pz));
         glUniformMatrix4fv(lv,1,0,v.m);
         
-        glUniform1f(lt, 1.0f); // Activate mathematical deformation for ground
-        // EXPANDED DRAW DISTANCE: Render chunks from -8 to 8 to cover the expanded Far Plane
-        for(int i=-8; i<=8; i++) for(int j=-8; j<=8; j++) {
+        glUniform1f(lt, 1.0f); // Terrain pass
+        for(int i=-6; i<=6; i++) for(int j=-6; j<=6; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
             Mat4 tm=Mat4::trans(tx,0,tz); glUniformMatrix4fv(lm,1,0,tm.m);
             glBindVertexArray(vaoTerrain); glDrawArrays(GL_TRIANGLES,0,N_TERRAIN);
         }
         
-        glUniform1f(lt, 0.0f); // Deactivate deformation for static objects
-        glBindVertexArray(vaoTree);
+        glUniform1f(lt, 0.0f); // Objects pass
         for(int i=-4; i<=4; i++) for(int j=-4; j<=4; j++) {
             float tx=floor(px/16.f)*16.f+i*16.f, tz=floor(pz/16.f)*16.f+j*16.f;
-            if(fmod(tx*1.2f+tz*0.8f, 6.f)>4.8f) {
-                float ty = getTerrainHeight(tx, tz);
-                Mat4 tm=Mat4::trans(tx,ty,tz); glUniformMatrix4fv(lm,1,0,tm.m);
-                glDrawArrays(GL_TRIANGLES,0,N_TREE);
+            float seed = fmod(tx*1.2f+tz*0.8f, 6.f);
+            if(seed > 4.8f) {
+                Mat4 tm=Mat4::trans(tx,getTerrainHeight(tx, tz),tz); glUniformMatrix4fv(lm,1,0,tm.m);
+                glBindVertexArray(vaoTree); glDrawArrays(GL_TRIANGLES,0,N_TREE);
+            } else if (seed > 4.5f && seed < 4.6f) {
+                Mat4 cm=Mat4::trans(tx,getTerrainHeight(tx, tz),tz); glUniformMatrix4fv(lm,1,0,cm.m);
+                glBindVertexArray(vaoChest); glDrawArrays(GL_TRIANGLES,0,N_CHEST);
             }
+        }
+        
+        // Clouds Render Layer
+        glBindVertexArray(vaoCloud);
+        for(int c=0; c<10; c++) {
+            float cx = fmod(c * 30.0f + globalTime * 2.0f, 200.0f) - 100.0f + px;
+            float cz = (c * 15.0f) - 50.0f + pz;
+            Mat4 clm = Mat4::trans(cx, 40.0f, cz); glUniformMatrix4fv(lm,1,0,clm.m);
+            glDrawArrays(GL_TRIANGLES,0,N_CLOUD);
         }
         
         // --- HIERARCHICAL KINEMATIC BINDINGS ---
         Mat4 root = Mat4::trans(px, hipHeight, pz).mul(Mat4::rotY(pf));
         
-        // Torso & Head
         glUniformMatrix4fv(lm,1,0,root.m); glBindVertexArray(vaoTorso); glDrawArrays(GL_TRIANGLES,0,N_TORSO);
         Mat4 head = root.mul(Mat4::trans(0,0.7f,0));
         glUniformMatrix4fv(lm,1,0,head.m); glBindVertexArray(vaoHead); glDrawArrays(GL_TRIANGLES,0,N_HEAD);
 
-        // Legs: Upper limb length is 0.4, Lower limb length is 0.4
-        float swingL = sin(wt) * 0.8f * speed; float swingR = sin(wt + 3.1415f) * 0.8f * speed;
+        // Legs (Jump stretches them, walk swings them)
+        float swingL = isGrounded ? sin(wt) * 0.8f * speed : 0.2f; 
+        float swingR = isGrounded ? sin(wt + 3.1415f) * 0.8f * speed : -0.2f;
         
         Mat4 hipL = root.mul(Mat4::trans(0.18f,0,0)).mul(Mat4::rotX(swingL));
         glUniformMatrix4fv(lm,1,0,hipL.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
-        Mat4 kneeL = hipL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingL > 0 ? swingL : 0)); // Bend backwards
+        Mat4 kneeL = hipL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingL > 0 ? swingL : 0));
         glUniformMatrix4fv(lm,1,0,kneeL.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
         
         Mat4 hipR = root.mul(Mat4::trans(-0.18f,0,0)).mul(Mat4::rotX(swingR));
@@ -150,15 +169,21 @@ extern "C" {
         Mat4 kneeR = hipR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(swingR > 0 ? swingR : 0));
         glUniformMatrix4fv(lm,1,0,kneeR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
 
-        // Arms & Dynamic Combat Transforms
+        // Arms & Combat
         float armL = -swingL * 0.6f; float armR = -swingR * 0.6f;
-        Mat4 shL = root.mul(Mat4::trans(-0.35f,0.5f,0)).mul(Mat4::rotX(armL));
-        Mat4 elbL = shL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(block ? -1.5f : -0.2f));
+        Mat4 shL = root.mul(Mat4::trans(-0.35f,0.5f,0));
+        
+        if(shieldBash) shL = shL.mul(Mat4::rotX(-1.5f)).mul(Mat4::trans(0,0,sin(st)*0.5f)); // Thrust forward
+        else if (block) shL = shL.mul(Mat4::rotX(-1.5f)); // Hold block
+        else shL = shL.mul(Mat4::rotX(armL)); // Regular swing
+        
+        Mat4 elbL = shL.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX((block || shieldBash) ? -1.0f : -0.2f));
         
         Mat4 shR = root.mul(Mat4::trans(0.35f,0.5f,0));
-        if(comboState == 1) shR = shR.mul(Mat4::rotY(-sin(st)*2.0)).mul(Mat4::rotX(-1.5));
-        else if(comboState == 2) shR = shR.mul(Mat4::rotY(sin(st)*2.0)).mul(Mat4::rotX(-1.5));
-        else if(comboState == 3) shR = shR.mul(Mat4::rotX(-sin(st)*3.0));
+        // FIXED SWORD ARCS: Swings gracefully across the body
+        if(comboState == 1) shR = shR.mul(Mat4::rotY(-sin(st)*2.0f)).mul(Mat4::rotX(-1.5f));
+        else if(comboState == 2) shR = shR.mul(Mat4::rotY(sin(st)*2.0f)).mul(Mat4::rotX(-1.5f));
+        else if(comboState == 3) shR = shR.mul(Mat4::rotX(-sin(st)*3.0f));
         else shR = shR.mul(Mat4::rotX(armR));
         Mat4 elbR = shR.mul(Mat4::trans(0,-0.4f,0)).mul(Mat4::rotX(-0.2f));
 
@@ -167,25 +192,20 @@ extern "C" {
         glUniformMatrix4fv(lm,1,0,shR.m); glBindVertexArray(vaoUpLimb); glDrawArrays(GL_TRIANGLES,0,N_UP_LIMB);
         glUniformMatrix4fv(lm,1,0,elbR.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
         
-        // FIXED SHIELD ALIGNMENT: Rotates shield to face outward along the forearm
-        Mat4 shield = elbL.mul(Mat4::trans(-0.1f,-0.2f,0.0f)).mul(Mat4::rotZ(1.57f)).mul(Mat4::rotX(1.57f));
+        // FIXED SHIELD: Attaches firmly to forearm facing outward
+        Mat4 shield = elbL.mul(Mat4::trans(-0.15f,-0.2f,0.0f)).mul(Mat4::rotZ(1.57f)).mul(Mat4::rotX(1.57f));
         glUniformMatrix4fv(lm,1,0,shield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
         
-        // FIXED SWORD GRIP: Anchors the pommel precisely to the hand joint
         Mat4 sword = elbR.mul(Mat4::trans(0,-0.4f,0.0f)).mul(Mat4::rotX(1.57f));
         glUniformMatrix4fv(lm,1,0,sword.m); glBindVertexArray(vaoSword); glDrawArrays(GL_TRIANGLES,0,N_SWORD);
     }
     
     JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEnv*, jobject, jint id) {
-        if(id==1) { 
-            // Snappy input queuing
-            if(comboState == 0 || st > 2.0f) { 
-                comboState++; 
-                if(comboState > 3) comboState = 1; 
-                st = 0; 
-            } 
-        } 
-        else if(id==2) block=true; else block=false;
+        if(id==1) { if(comboState == 0 || st > 2.0f) { comboState++; if(comboState > 3) comboState = 1; st = 0; } } 
+        else if(id==2) block=true; 
+        else if(id==3) block=false;
+        else if(id==4) { if(isGrounded) { vy = 9.0f; isGrounded = false; } } // JUMP
+        else if(id==6) { shieldBash = true; st = 0; } // SHIELD BASH
     }
 }
 EOF
