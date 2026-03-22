@@ -38,6 +38,7 @@ struct Mat4 {
 float getTerrainHeight(float x, float z) { return sin(x * 0.4f) * cos(z * 0.4f) * 1.5f; }
 
 GLuint prog, vaoTorso, vaoHead, vaoUpLimb, vaoLowLimb, vaoSword, vaoShield, vaoTree, vaoTerrain;
+Mat4 proj; // <-- FIX: Declared the projection matrix globally
 float px=0, py=0, pz=0, pf=0, wt=0, st=0;
 bool block=false;
 
@@ -162,7 +163,7 @@ extern "C" {
         Mat4 mRForeArm = mRArmNode.mul(Mat4::trans(0, -0.45f, 0));
         glUniformMatrix4fv(lm,1,0,mRForeArm.m); glBindVertexArray(vaoLowLimb); glDrawArrays(GL_TRIANGLES,0,N_LOW_LIMB);
         
-        // SHIELD FIX: Apply explicit rotation at the wrist so it stands vertically, independent of scaling!
+        // SHIELD FIX: Apply explicit rotation at the wrist so it stands vertically
         Mat4 mShield = mRForeArm.mul(Mat4::trans(0, -0.48f, 0)).mul(Mat4::rotX(1.57f));
         glUniformMatrix4fv(lm,1,0,mShield.m); glBindVertexArray(vaoShield); glDrawArrays(GL_TRIANGLES,0,N_SHIELD);
 
