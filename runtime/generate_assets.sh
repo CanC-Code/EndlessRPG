@@ -1,12 +1,12 @@
 #!/bin/bash
 # File: runtime/generate_assets.sh
-# Purpose: Modular, version-proof asset pipeline.
+# Purpose: Modular, mathematically robust asset generation fixing zero-geometry export failures.
 
 mkdir -p runtime/python
 mkdir -p app/src/main/cpp/models
 
 cat << 'EOF' > runtime/python/exporter.py
-import bpy, bmesh, math
+import bpy, bmesh
 
 def clean():
     bpy.ops.object.select_all(action='SELECT')
@@ -16,23 +16,33 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     clean()
     build_func()
     
+    # 1. Enforce Hard-Edge Voxel Aesthetics
     for obj in bpy.context.scene.objects:
         if obj.type == 'MESH':
             for poly in obj.data.polygons: poly.use_smooth = False
             
+    # 2. Safely Apply All Transformations to Prevent Engine Deformation
     bpy.ops.object.select_all(action='SELECT')
-    if not bpy.context.selected_objects: return
+    for obj in bpy.context.selected_objects:
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+            
+    # 3. Join Geometry Safely
+    bpy.ops.object.select_all(action='SELECT')
+    if not bpy.context.selected_objects:
+        print(f"ERROR: {name} geometry failed to generate.")
+        return
+        
     bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
     bpy.ops.object.join()
     
-    # Absolute transforms prevent engine deformation
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-    
     obj = bpy.context.object
     mesh = obj.data
+    
+    # 4. Robust Triangulation
     bm = bmesh.new()
     bm.from_mesh(mesh)
-    bmesh.ops.triangulate(bm, faces=bm.faces[:])
+    bmesh.ops.triangulate(bm, faces=bm.faces)
     bm.to_mesh(mesh)
     bm.free()
     
@@ -41,6 +51,7 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     height = max((v.co.z for v in mesh.vertices), default=1) - min_z
     mesh.calc_loop_triangles()
     
+    # 5. Extract Lit Geometry
     for tri in mesh.loop_triangles:
         lum = 0.6 + (tri.normal.z * 0.4)
         for loop_idx in tri.loops:
@@ -51,88 +62,50 @@ def bake_and_export(name, r, g, b, build_func, outfile, is_terrain=False):
     with open(outfile, "a") as f:
         f.write(f"const float M_{name}[] = {{ {', '.join(map(str, verts))} }};\n")
         f.write(f"const int N_{name} = {len(verts)//8};\n")
+    print(f"SUCCESS: Exported {name} with {len(verts)//8} vertices.")
 EOF
 
 cat << 'EOF' > runtime/python/builder_char.py
 import bpy
 
 def build_body():
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.3, 0.2, 0.4)
-    bpy.context.object.location = (0, 0, 0.4)
-    
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.1, 0.1, 0.1)
-    bpy.context.object.location = (0, 0, 0.85)
-    
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.15, 0.15, 0.15)
-    bpy.context.object.location = (0.35, 0, 0.65)
-    
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.15, 0.15, 0.15)
-    bpy.context.object.location = (-0.35, 0, 0.65)
+    bpy.ops.mesh.primitive_cube_add(scale=(0.3, 0.2, 0.4), location=(0,0,0.4)) 
+    bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.1, 0.1), location=(0,0,0.85)) 
+    bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.15), location=(0.35,0,0.65)) 
+    bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.15), location=(-0.35,0,0.65)) 
 
-def build_head():
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.22, 0.22, 0.22)
-    bpy.context.object.location = (0, 0, 0.1)
-
-def build_up_limb():
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.1, 0.1, 0.25)
-    bpy.context.object.location = (0, 0, -0.25)
-
+def build_head(): bpy.ops.mesh.primitive_cube_add(scale=(0.22, 0.22, 0.22), location=(0,0,0.1))
+def build_up_limb(): bpy.ops.mesh.primitive_cube_add(scale=(0.1, 0.1, 0.25), location=(0,0,-0.25))
 def build_low_limb():
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.08, 0.08, 0.25)
-    bpy.context.object.location = (0, 0, -0.25)
-    
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.12, 0.15, 0.12)
-    bpy.context.object.location = (0, 0, -0.5)
+    bpy.ops.mesh.primitive_cube_add(scale=(0.08, 0.08, 0.25), location=(0,0,-0.25))
+    bpy.ops.mesh.primitive_cube_add(scale=(0.12, 0.15, 0.12), location=(0,0,-0.5))
 EOF
 
 cat << 'EOF' > runtime/python/builder_env.py
 import bpy, math
 
 def build_sword():
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.04, 0.04, 0.8)
-    bpy.context.object.location = (0, 0, 0.8)
-    
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.2, 0.06, 0.05)
-    bpy.context.object.location = (0, 0, 0.1)
+    bpy.ops.mesh.primitive_cube_add(scale=(0.04, 0.04, 0.8), location=(0,0,0.8))
+    bpy.ops.mesh.primitive_cube_add(scale=(0.2, 0.06, 0.05), location=(0,0,0.1))
 
 def build_shield():
-    bpy.ops.mesh.primitive_cylinder_add(vertices=16)
-    bpy.context.object.scale = (0.45, 0.45, 0.04)
-    
-    bpy.ops.mesh.primitive_cube_add()
-    bpy.context.object.scale = (0.15, 0.15, 0.06)
-    bpy.context.object.location = (0, 0, 0.06)
+    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=0.45, depth=0.08)
+    bpy.ops.mesh.primitive_cube_add(scale=(0.15, 0.15, 0.06), location=(0,0,0.06))
 
 def build_terrain():
-    bpy.ops.mesh.primitive_grid_add(x_subdivisions=16, y_subdivisions=16)
-    bpy.context.object.scale = (8.0, 8.0, 1.0)
+    bpy.ops.mesh.primitive_grid_add(size=16, x_subdivisions=16, y_subdivisions=16)
 
 def build_tree():
-    def branch(loc, angle_x, angle_y, level, scale_fac):
+    def branch(loc, angle_x, angle_y, level, scale):
         if level == 0:
-            bpy.ops.mesh.primitive_cube_add()
-            bpy.context.object.scale = (0.6*scale_fac, 0.6*scale_fac, 0.6*scale_fac)
-            bpy.context.object.location = loc
+            bpy.ops.mesh.primitive_cube_add(scale=(0.6*scale, 0.6*scale, 0.6*scale), location=loc)
             return
-        bpy.ops.mesh.primitive_cube_add()
+        bpy.ops.mesh.primitive_cube_add(scale=(0.1*scale, 0.1*scale, 1.0*scale), location=loc)
         b = bpy.context.object
-        b.scale = (0.1*scale_fac, 0.1*scale_fac, 1.0*scale_fac)
-        b.location = loc
         b.rotation_euler = (angle_x, angle_y, 0)
-        
-        next_loc = (loc[0]+math.sin(angle_y)*scale_fac*2, loc[1]-math.sin(angle_x)*scale_fac*2, loc[2]+math.cos(angle_x)*scale_fac*2)
-        branch(next_loc, angle_x+0.5, angle_y+0.4, level-1, scale_fac*0.7)
-        branch(next_loc, angle_x-0.4, angle_y-0.5, level-1, scale_fac*0.7)
+        next_loc = (loc[0]+math.sin(angle_y)*scale*2, loc[1]-math.sin(angle_x)*scale*2, loc[2]+math.cos(angle_x)*scale*2)
+        branch(next_loc, angle_x+0.5, angle_y+0.4, level-1, scale*0.7)
+        branch(next_loc, angle_x-0.4, angle_y-0.5, level-1, scale*0.7)
     branch((0,0,1.0), 0, 0, 3, 1.0)
 EOF
 
@@ -143,8 +116,7 @@ from exporter import bake_and_export
 from builder_char import *
 from builder_env import *
 
-with open("app/src/main/cpp/models/AllModels.h", "w") as f: 
-    f.write("#pragma once\n")
+with open("app/src/main/cpp/models/AllModels.h", "w") as f: f.write("#pragma once\n")
 
 bake_and_export("TORSO", 0.6, 0.65, 0.7, build_body, "app/src/main/cpp/models/AllModels.h")
 bake_and_export("HEAD", 0.85, 0.7, 0.6, build_head, "app/src/main/cpp/models/AllModels.h")
