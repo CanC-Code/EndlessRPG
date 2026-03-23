@@ -1,6 +1,6 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# EndlessRPG v6 - High-Fidelity Native Engine with Atmospheric Pipeline
+# EndlessRPG v6 - Clean High-Fidelity Native Engine
 set -e
 
 OUT="app/src/main/cpp/native-lib.cpp"
@@ -36,15 +36,15 @@ GLuint makeVAO9(const float* data, int vertexCount) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, vertexCount * 9 * sizeof(float), data, GL_STATIC_DRAW);
 
-    // Attribute 0: Position (3f)
+    // Attribute 0: Position (3 floats)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     
-    // Attribute 1: Color (3f)
+    // Attribute 1: Color (3 floats)
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
     
-    // Attribute 2: Normal (3f)
+    // Attribute 2: Normal (3 floats)
     glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
     
@@ -53,25 +53,28 @@ GLuint makeVAO9(const float* data, int vertexCount) {
 
 extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onCreated(JNIEnv* env, jclass clz) {
-        [span_0](start_span)// Compile Shaders from generated Shaders.h[span_0](end_span)
+        // Compile Shaders from generated Shaders.h
         GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vs, 1, &WORLD_VS, NULL); glCompileShader(vs);
+        glShaderSource(vs, 1, &WORLD_VS, NULL); 
+        glCompileShader(vs);
+        
         GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fs, 1, &WORLD_FS, NULL); glCompileShader(fs);
+        glShaderSource(fs, 1, &WORLD_FS, NULL); 
+        glCompileShader(fs);
         
         worldProgram = glCreateProgram();
         glAttachShader(worldProgram, vs);
         glAttachShader(worldProgram, fs);
         glLinkProgram(worldProgram);
 
-        [span_1](start_span)[span_2](start_span)// Map Uniforms[span_1](end_span)[span_2](end_span)
+        // Map Uniform Locations
         uMVP      = glGetUniformLocation(worldProgram, "uMVP");
         uModel    = glGetUniformLocation(worldProgram, "uModel");
         uSunDir   = glGetUniformLocation(worldProgram, "uSunDir");
         uViewPos  = glGetUniformLocation(worldProgram, "uViewPos");
         uFogColor = glGetUniformLocation(worldProgram, "uFogColor");
 
-        [span_3](start_span)// Initialize VAOs with 9-float logic (Pos, Col, Norm)[span_3](end_span)
+        // Initialize VAOs for character and environment
         vaoHead    = makeVAO9(M_HEAD, N_HEAD);
         vaoTorso   = makeVAO9(M_TORSO, N_TORSO);
         vaoUpLimb  = makeVAO9(M_UP_LIMB, N_UP_LIMB);
@@ -88,13 +91,13 @@ extern "C" {
     JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onDraw(JNIEnv* env, jclass clz, 
         jfloat joyX, jfloat joyY, jfloat yaw, jfloat pitch) {
         
-        [span_4](start_span)// Atmosphere Setup[span_4](end_span)
-        glClearColor(0.7f, 0.85f, 0.95f, 1.0f); // Sky Blue Fog
+        // Atmosphere Setup (Sky Color)
+        glClearColor(0.7f, 0.85f, 0.95f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
         glUseProgram(worldProgram);
 
-        [span_5](start_span)// Camera Logic (Matches skyline perspective)[span_5](end_span)
+        // Camera Transformation
         glm::vec3 camPos = glm::vec3(
             camZoom * cos(pitch) * sin(yaw),
             camZoom * sin(pitch),
@@ -103,12 +106,12 @@ extern "C" {
         glm::mat4 view = glm::lookAt(camPos, glm::vec3(0, 1.0f, 0), glm::vec3(0, 1, 0));
         glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)screenW/screenH, 0.1f, 200.0f);
         
-        [span_6](start_span)// Lighting & Fog Uniforms[span_6](end_span)
+        // Set Uniforms
         glUniform3f(uSunDir, 1.0f, 2.0f, 1.0f); 
         glUniform3f(uViewPos, camPos.x, camPos.y, camPos.z);
         glUniform3f(uFogColor, 0.7f, 0.85f, 0.95f);
 
-        // --- Character Assembly Rendering ---
+        // Lambda for cleaner rendering calls
         auto drawPart = [&](GLuint vao, int count, glm::mat4 m) {
             glUniformMatrix4fv(uModel, 1, GL_FALSE, glm::value_ptr(m));
             glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(proj * view * m));
@@ -117,25 +120,27 @@ extern "C" {
         };
 
         glm::mat4 base = glm::mat4(1.0f);
-        drawPart(vaoTorso, N_TORSO, glm::translate(base, {0, 1.2, 0}));
-        drawPart(vaoHead,  N_HEAD,  glm::translate(base, {0, 2.0, 0}));
         
-        // Limbs (L/R)
+        // Character Assembly
+        drawPart(vaoTorso, N_TORSO, glm::translate(base, glm::vec3(0, 1.2f, 0)));
+        drawPart(vaoHead,  N_HEAD,  glm::translate(base, glm::vec3(0, 2.0f, 0)));
+        
         for(float side : {-0.55f, 0.55f}) {
-            drawPart(vaoUpLimb, N_UP_LIMB, glm::translate(base, {side, 1.5, 0}));
-            drawPart(vaoLowLimb, N_LOW_LIMB, glm::translate(base, {side * 0.8f, 0.6, 0}));
+            drawPart(vaoUpLimb, N_UP_LIMB, glm::translate(base, glm::vec3(side, 1.5f, 0)));
+            drawPart(vaoLowLimb, N_LOW_LIMB, glm::translate(base, glm::vec3(side * 0.8f, 0.6f, 0)));
         }
 
-        // --- Environment Props ---
-        drawPart(vaoTree, N_TREE, glm::translate(base, {-4, 2, -4}));
-        drawPart(vaoRock, N_ROCK, glm::translate(base, {3, 0.4, 2}));
+        // Environment Assembly
+        drawPart(vaoTree, N_TREE, glm::translate(base, glm::vec3(-4, 2, -4)));
+        drawPart(vaoRock, N_ROCK, glm::translate(base, glm::vec3(3, 0.4f, 2)));
     }
 
     JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onChanged(JNIEnv* env, jclass clz, jint w, jint h) {
-        screenW = w; screenH = h;
-        glViewport(0, 0, w, h);
+        screenW = (w > 0) ? w : 1; 
+        screenH = (h > 0) ? h : 1;
+        glViewport(0, 0, screenW, screenH);
     }
 }
 EOF
 
-echo "[generate_engine.sh] Success: native-lib.cpp updated with High-Fidelity Fog & Lighting."
+echo "[generate_engine.sh] Success: Clean native-lib.cpp generated."
