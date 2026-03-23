@@ -1,23 +1,29 @@
 #!/bin/bash
 # File: runtime/generate_engine.sh
-# EndlessRPG v5
-# - Pencil/ink art style: cel-quantised tones, screen-space edge darkening,
-#   crosshatch AO approximation, desaturated palette
-# - Truly infinite terrain: CRAD=5, chunk size 48, 7-octave fBm no visible edge
-# - Moonlight: separate moon direction contributes Lambertian + blue-silver ambient
-# - Shield: world-space orientation — always faces character's forward direction,
-#   point hanging downward. No spurious local-arm rotation.
-# - Character: knight proportions, broader torso
-# - Trees: larger draw radius, pencil shading
-# - Realistic night: deep blue-black ink fog, silver moonlight rim
+# EndlessRPG v6
+# - PHOTOREALISTIC terrain: earthy greens/browns/greys, real sky, no cel/hatch
+# - Unified build: native-lib.cpp compiled by CMakeLists.txt (no more engine.cpp split)
+# - Touch input fixed: zoom is a separate persistent state, not passed from Java time
+# - Terrain colours match real Canadian mountain valley / prairie reference
 
 set -e
 mkdir -p app/src/main/cpp
 
+# ── Fix CMakeLists.txt to compile native-lib.cpp ──────────────────
+cat <<'EOF' > app/src/main/cpp/CMakeLists.txt
+cmake_minimum_required(VERSION 3.22.1)
+project("game_engine")
+add_library(game_engine SHARED native-lib.cpp)
+find_library(log-lib log)
+find_library(gles3-lib GLESv3)
+target_link_libraries(game_engine ${log-lib} ${gles3-lib})
+EOF
+
+# ── Write the full native-lib.cpp ─────────────────────────────────
 cat << 'CPPEOF' > app/src/main/cpp/native-lib.cpp
 // ════════════════════════════════════════════════════════════════
-//  EndlessRPG  —  native-lib.cpp  v5
-//  Pencil-ink art  |  Infinite world  |  Moonlight  |  Knight
+//  EndlessRPG  —  native-lib.cpp  v6
+//  PHOTOREALISTIC terrain  |  Infinite world  |  Fixed touch input
 // ════════════════════════════════════════════════════════════════
 #include <jni.h>
 #include <GLES3/gl3.h>
@@ -73,7 +79,7 @@ static inline float clamp01(float v){return v<0?0:v>1?1:v;}
 static inline float lerpf(float a,float b,float t){return a+t*(b-a);}
 
 // ────────────────────────────────────────────────────────────────
-//  Terrain — 7-octave fBm, no visible repetition within play range
+//  Terrain — 7-octave fBm
 // ────────────────────────────────────────────────────────────────
 static float hash(float x,float y){float s=sinf(x*127.1f+y*311.7f)*43758.5453f;return s-floorf(s);}
 static float vnoise(float x,float y){
@@ -120,9 +126,10 @@ static GLuint makeVAO6(const float* d,int n){
 }
 
 // ════════════════════════════════════════════════════════════════
-//  SHADERS  — Pencil/Ink Art
+//  SHADERS — PHOTOREALISTIC (no cel, no hatch, no desaturation)
 // ════════════════════════════════════════════════════════════════
 
+// World/character shader: full-colour Lambertian + ambient + specular + fog
 static const char* WORLD_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos;
@@ -132,6 +139,7 @@ out vec3 vCol; out vec3 vWorldPos; out vec3 vNormal;
 void main(){
     vec4 wp=uModel*vec4(aPos,1.0);
     vWorldPos=wp.xyz; vCol=aCol;
+    // approximate normal from model mat (uniform scale assumed)
     vNormal=normalize(mat3(uModel)*vec3(0.0,1.0,0.0));
     gl_Position=uMVP*vec4(aPos,1.0);
 }
@@ -144,45 +152,26 @@ uniform vec3  uSunDir,uSunColor,uMoonDir,uMoonColor;
 uniform vec3  uAmbientSky,uAmbientGnd,uCamPos,uFogColor;
 uniform float uFogNear,uFogFar,uNight;
 out vec4 FragColor;
-
-float hatch(vec3 p){
-    vec3 g=floor(p*3.6);
-    float s=sin(g.x*127.1+g.y*311.7+g.z*74.9)*43758.5;
-    return s-floor(s);
-}
-float cel(float v){
-    if(v<0.15) return 0.04;
-    if(v<0.38) return 0.24;
-    if(v<0.68) return 0.55;
-    return 0.88;
-}
 void main(){
     vec3 N=normalize(vNormal);
-    vec3 V=normalize(uCamPos-vWorldPos);
+    // Hemisphere ambient
     float hemi=N.y*0.5+0.5;
     vec3 amb=mix(uAmbientGnd,uAmbientSky,hemi);
+    // Lambertian sun + moon
     float NdS=max(dot(N,uSunDir),0.0);
     float NdM=max(dot(N,uMoonDir),0.0);
-    float sunDiff=cel(NdS)*(1.0-uNight);
-    float moonDiff=cel(NdM)*uNight*0.55;
-    vec3 diffuse=uSunColor*sunDiff+uMoonColor*moonDiff;
-    float shadow=1.0-clamp(NdS+NdM*0.4,0.0,1.0);
-    float hatchAO=1.0-shadow*hatch(vWorldPos)*0.38;
-    vec3 lit=(amb+diffuse)*vCol*hatchAO;
-    float grey=dot(lit,vec3(0.299,0.587,0.114));
-    lit=mix(lit,vec3(grey),0.44);
-    float rim=pow(1.0-clamp(dot(N,V),0.0,1.0),2.8)*0.58;
-    lit=mix(lit,vec3(0.02,0.02,0.03),rim);
-    float moonRim=pow(clamp(dot(N,-uMoonDir),0.0,1.0),4.0)*uNight*0.28;
-    lit+=uMoonColor*moonRim;
+    vec3 diffuse=uSunColor*NdS*(1.0-uNight) + uMoonColor*NdM*uNight*0.35;
+    vec3 lit=(amb+diffuse)*vCol;
+    // Atmospheric fog
     float dist=length(uCamPos-vWorldPos);
     float fog=clamp((dist-uFogNear)/(uFogFar-uFogNear),0.0,1.0);
     fog=fog*fog*(2.0-fog);
-    fog=clamp(fog*(1.0+uNight*0.45),0.0,1.0);
+    fog=clamp(fog*(1.0+uNight*0.3),0.0,1.0);
     FragColor=vec4(mix(lit,uFogColor,fog),1.0);
 }
 )GLSL";
 
+// Terrain shader: per-vertex colour + proper normal + fog
 static const char* TERR_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos;
@@ -198,6 +187,34 @@ void main(){
 }
 )GLSL";
 
+// Terrain fragment: photorealistic diffuse + terrain wetness darkening
+static const char* TERR_FS = R"GLSL(#version 300 es
+precision highp float;
+in vec3 vCol; in vec3 vWorldPos; in vec3 vNormal;
+uniform vec3  uSunDir,uSunColor,uMoonDir,uMoonColor;
+uniform vec3  uAmbientSky,uAmbientGnd,uCamPos,uFogColor;
+uniform float uFogNear,uFogFar,uNight;
+out vec4 FragColor;
+void main(){
+    vec3 N=normalize(vNormal);
+    float hemi=N.y*0.5+0.5;
+    vec3 amb=mix(uAmbientGnd,uAmbientSky,hemi);
+    float NdS=max(dot(N,uSunDir),0.0);
+    float NdM=max(dot(N,uMoonDir),0.0);
+    // Soften sun shadow on terrain (bounced light fill)
+    float sunContrib = mix(0.12, 1.0, NdS) * (1.0 - uNight);
+    float moonContrib = NdM * uNight * 0.30;
+    vec3 diffuse = uSunColor * sunContrib + uMoonColor * moonContrib;
+    vec3 lit = amb*0.6 + diffuse*vCol;
+    float dist=length(uCamPos-vWorldPos);
+    float fog=clamp((dist-uFogNear)/(uFogFar-uFogNear),0.0,1.0);
+    fog=fog*fog*(2.0-fog);
+    fog=clamp(fog*(1.0+uNight*0.3),0.0,1.0);
+    FragColor=vec4(mix(lit,uFogColor,fog),1.0);
+}
+)GLSL";
+
+// Sky: photorealistic Rayleigh-inspired gradient, sun disc, moon, stars
 static const char* SKY_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos;
@@ -212,57 +229,77 @@ uniform vec3 uSunDir,uMoonDir,uFogColor;
 uniform float uDayFrac;
 out vec4 FragColor;
 
-vec3 skyCol(vec3 dir,vec3 sun,float df){
-    float up=max(dir.y,0.0),sa=max(dot(dir,sun),0.0);
-    vec3 zD=vec3(0.13,0.18,0.34),hD=vec3(0.40,0.48,0.60);
-    vec3 zDk=vec3(0.06,0.06,0.14),hDk=vec3(0.52,0.26,0.10);
-    vec3 zN=vec3(0.01,0.01,0.04),hN=vec3(0.02,0.02,0.06);
-    float dusk=smoothstep(0.0,0.18,df)*(1.0-smoothstep(0.18,0.36,df))
-              +smoothstep(0.64,0.82,df)*(1.0-smoothstep(0.82,1.0,df));
-    float night=1.0-smoothstep(0.15,0.35,df)*smoothstep(0.85,0.65,df);
-    float day=1.0-dusk-night*0.5;
-    vec3 zen=zD*day+zDk*dusk+zN*night;
-    vec3 hor=hD*day+hDk*dusk+hN*night;
-    vec3 sky=mix(hor,zen,up*up);
-    sky+=mix(vec3(0.75,0.60,0.35),vec3(0.85,0.78,0.55),df)*pow(sa,10.0)*0.25*(1.0-night);
+vec3 skyGradient(vec3 dir, vec3 sunDir, float df) {
+    float up = clamp(dir.y, 0.0, 1.0);
+    float sunDot = max(dot(dir, sunDir), 0.0);
+
+    // Time-of-day blend
+    float night   = 1.0 - smoothstep(0.15, 0.35, df) * smoothstep(0.85, 0.65, df);
+    float dusk    = smoothstep(0.0, 0.15, df)*(1.0-smoothstep(0.15,0.30,df))
+                  + smoothstep(0.70, 0.85, df)*(1.0-smoothstep(0.85,1.0,df));
+    float day     = clamp(1.0 - night - dusk*0.5, 0.0, 1.0);
+
+    // Day sky: realistic blue zenith, pale blue-white horizon
+    vec3 dayZen = vec3(0.18, 0.40, 0.72);
+    vec3 dayHor = vec3(0.62, 0.76, 0.90);
+    // Dusk/dawn: warm orange-pink horizon
+    vec3 duskZen = vec3(0.10, 0.14, 0.30);
+    vec3 duskHor = vec3(0.78, 0.38, 0.10);
+    // Night: deep blue-black
+    vec3 nightZen = vec3(0.01, 0.02, 0.06);
+    vec3 nightHor = vec3(0.02, 0.03, 0.08);
+
+    vec3 zen = dayZen*day + duskZen*dusk + nightZen*night;
+    vec3 hor = dayHor*day + duskHor*dusk + nightHor*night;
+    vec3 sky = mix(hor, zen, up*up);
+
+    // Sun scatter glow (wide halo + corona)
+    sky += vec3(0.95, 0.85, 0.60) * pow(sunDot, 6.0) * 0.18 * (1.0-night);
+    sky += vec3(0.90, 0.70, 0.30) * pow(sunDot, 28.0) * 0.35 * (1.0-night);
+
     return sky;
 }
-float starN(vec3 d){vec3 f=floor(d*220.0);float s=sin(f.x*127.1+f.y*311.7+f.z*74.9)*43758.5;return s-floor(s);}
+
+float starNoise(vec3 d){
+    vec3 f=floor(d*240.0);
+    float s=sin(f.x*127.1+f.y*311.7+f.z*74.9)*43758.5;
+    return s-floor(s);
+}
 
 void main(){
     vec3 dir=normalize(vDir);
-    vec3 col=skyCol(dir,uSunDir,uDayFrac);
-    float hb=clamp(1.0-dir.y*5.5,0.0,1.0);hb=hb*hb*hb;
-    col=mix(col,uFogColor,hb*0.92);
+    vec3 col=skyGradient(dir, uSunDir, uDayFrac);
+
+    // Horizon fog blend
+    float hb=clamp(1.0-dir.y*5.0,0.0,1.0); hb=hb*hb*hb;
+    col=mix(col, uFogColor, hb*0.88);
+
     float night=1.0-smoothstep(0.12,0.32,uDayFrac)*smoothstep(0.88,0.68,uDayFrac);
     float dayt=1.0-night;
-    // Sun
+
+    // Sun disc
     float sunA=dot(dir,uSunDir);
-    col+=vec3(0.94,0.88,0.72)*smoothstep(0.9994,0.9998,sunA)*dayt;
-    col+=vec3(0.75,0.60,0.28)*pow(max(sunA,0.0),32.0)*0.22*dayt;
-    // Moon — large luminous disc
+    col += vec3(1.0,0.97,0.90)*smoothstep(0.9994,0.9998,sunA)*dayt;
+    col += vec3(1.0,0.90,0.65)*pow(max(sunA,0.0),200.0)*0.8*dayt;
+
+    // Moon disc
     float moonA=dot(dir,uMoonDir);
-    float moonCore=smoothstep(0.9988,0.9996,moonA);
-    col+=vec3(0.78,0.84,0.92)*moonCore*night;
-    col+=vec3(0.28,0.32,0.44)*pow(max(moonA,0.0),20.0)*night*0.60;
-    // Mare detail
-    if(moonCore>0.01){
-        vec3 mf=floor(dir*300.0);
-        float mare=sin(mf.x*71.3+mf.y*153.7+mf.z*39.1)*43758.5;
-        mare=mare-floor(mare);
-        col*=1.0-moonCore*mare*0.14;
-    }
+    col += vec3(0.90,0.94,1.00)*smoothstep(0.9990,0.9996,moonA)*night;
+    col += vec3(0.50,0.56,0.70)*pow(max(moonA,0.0),18.0)*0.45*night;
+
     // Stars
-    if(dir.y>0.0&&night>0.05){
-        float star=starN(dir);
-        float tw=smoothstep(0.990,1.0,star);
-        vec3 sc=mix(vec3(0.65,0.78,1.0),vec3(1.0,0.94,0.78),(star*7.0-floor(star*7.0)));
-        col+=sc*tw*night*(0.55+dir.y*0.45);
+    if(dir.y>0.0 && night>0.05){
+        float star=starNoise(dir);
+        float tw=smoothstep(0.991,1.0,star);
+        vec3 sc=mix(vec3(0.70,0.82,1.0),vec3(1.0,0.92,0.75),(star*7.0-floor(star*7.0)));
+        col+=sc*tw*night*(0.50+dir.y*0.50);
     }
+
     FragColor=vec4(col,1.0);
 }
 )GLSL";
 
+// Cloud billboard shader
 static const char* CLOUD_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec2 aUV;
@@ -283,17 +320,20 @@ float h2(vec2 p){float s=sin(p.x*127.1+p.y*311.7)*43758.5;return s-floor(s);}
 float n2(vec2 p){vec2 i=floor(p),f=p-i,u=f*f*(3.0-2.0*f);
     return mix(mix(h2(i),h2(i+vec2(1,0)),u.x),mix(h2(i+vec2(0,1)),h2(i+vec2(1,1)),u.x),u.y);}
 void main(){
-    vec2 c=vUV-0.5;float r=length(c)*2.0;
+    vec2 c=vUV-0.5; float r=length(c)*2.0;
     float base=max(0.0,1.0-r*r);
-    float n=n2(vUV*5.0)*0.4+n2(vUV*11.0)*0.15;
-    float alpha=clamp(base+n-0.25,0.0,1.0)*uAlpha*mix(1.0,0.55,uNight);
+    float n=n2(vUV*4.0)*0.35+n2(vUV*9.0)*0.12;
+    float alpha=clamp(base+n-0.22,0.0,1.0)*uAlpha*mix(1.0,0.45,uNight);
     if(alpha<0.015) discard;
-    float lit=mix(0.82,0.16,uNight)+vUV.y*0.10;
-    float grain=n2(vUV*38.0)*0.07;
-    FragColor=vec4(vec3(lit-grain),alpha);
+    // Realistic cloud: bright white top, slightly grey-blue bottom
+    float lit=mix(0.78,0.97,vUV.y) - n2(vUV*22.0)*0.04;
+    float lit2=mix(lit, lit*0.70, uNight);
+    vec3 cloudCol=mix(vec3(lit2*0.82, lit2*0.86, lit2), vec3(lit2), 0.5);
+    FragColor=vec4(cloudCol, alpha);
 }
 )GLSL";
 
+// Foliage billboard shader
 static const char* FOLIAGE_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec2 aUV;
@@ -318,24 +358,28 @@ void main(){
     float alpha=blade*uAlpha;
     vec3 col;
     if(uType==0){
+        // Grass: rich green base, lighter yellow-green tips — like real prairie grass
         float t=vUV.y;
-        col=vec3(mix(0.06,0.15,t),mix(0.18,0.34,t),mix(0.04,0.08,t));
+        col=vec3(mix(0.08,0.22,t), mix(0.22,0.42,t), mix(0.04,0.10,t));
     } else {
+        // Wheat/dry grass: golden straw colour
         float t=vUV.y;
-        col=vec3(mix(0.36,0.65,t),mix(0.26,0.48,t),mix(0.05,0.11,t));
-        if(t>0.80) col*=0.76;
+        col=vec3(mix(0.42,0.68,t), mix(0.34,0.56,t), mix(0.08,0.14,t));
+        if(t>0.80) col*=0.85;
     }
+    // Night desaturation
     float grey=dot(col,vec3(0.299,0.587,0.114));
-    col=mix(col,vec3(grey*0.45),uNight*0.82);
-    vec3 ambTint=uAmbientSky/vec3(0.38,0.48,0.65);
-    col*=clamp(ambTint,0.05,1.2);
+    col=mix(col,vec3(grey*0.30),uNight*0.75);
+    // Sky tint
+    vec3 ambTint=uAmbientSky/vec3(0.30,0.44,0.22);
+    col*=clamp(ambTint,0.05,1.3);
     if(alpha<0.04) discard;
     FragColor=vec4(col,alpha);
 }
 )GLSL";
 
 // ════════════════════════════════════════════════════════════════
-//  Terrain streaming — 48-cell chunks, radius 5 = 240m
+//  Terrain streaming
 // ════════════════════════════════════════════════════════════════
 static const int CHUNK=48; static const float CELL=1.f; static const int CRAD=5;
 struct TerrainChunk{int cx,cz;GLuint vao=0,vbo=0,ebo=0;int idxCount=0;bool built=false;};
@@ -351,21 +395,45 @@ static void buildChunk(TerrainChunk& c){
         V3 n=terrNormal(wx,wz);
         float t=clamp01(wy/10.f);
         float mud=muddiness(wx,wz),dry=drynessT(wx,wz);
-        float micro=(hash(wx*3.1f,wz*2.7f)-0.5f)*0.05f;
+        float micro=(hash(wx*3.1f,wz*2.7f)-0.5f)*0.03f;
         float r,g,b;
-        if(t<0.07f){r=lerpf(0.12f,0.09f,mud);g=lerpf(0.10f,0.07f,mud);b=0.07f;}
-        else if(t<0.14f){float f=(t-0.07f)/0.07f;r=lerpf(0.20f,0.14f,f);g=lerpf(0.14f,0.12f,f);b=0.09f;}
-        else if(t<0.42f){float f=(t-0.14f)/0.28f;
-            r=lerpf(0.10f,0.18f,f)+micro;g=lerpf(0.20f,0.26f,f);b=lerpf(0.06f,0.09f,f);
-            r=lerpf(r,0.18f,dry*0.5f);g=lerpf(g,0.16f,dry*0.4f);}
-        else if(t<0.66f){float f=(t-0.42f)/0.24f;
-            r=lerpf(0.24f,0.36f,f)+micro;g=lerpf(0.20f,0.26f,f);b=lerpf(0.09f,0.11f,f);}
-        else if(t<0.82f){float f=(t-0.66f)/0.16f;
-            r=lerpf(0.34f,0.42f,f)+micro*0.5f;g=lerpf(0.32f,0.38f,f);b=lerpf(0.28f,0.34f,f);}
-        else{float f=clamp01((t-0.82f)/0.18f);r=lerpf(0.44f,0.70f,f);g=lerpf(0.44f,0.70f,f);b=lerpf(0.44f,0.72f,f);}
-        float sd=n.y*0.40f+0.60f; r*=sd; g*=sd; b*=sd;
-        float grey=(r+g+b)/3.f;
-        r=lerpf(r,grey,0.30f);g=lerpf(g,grey,0.30f);b=lerpf(b,grey,0.30f);
+        // PHOTOREALISTIC terrain palette based on real mountain valley + prairie reference:
+        // Low (water/mud): dark grey-brown riverbed
+        // Low-mid: dark earthy green (valley floor grass)
+        // Mid: rich green meadow
+        // Mid-high: dry golden-green with variation
+        // High: rocky grey-brown scree
+        // Peak: pale grey limestone / snow
+        if(t<0.07f){
+            // Riverbed / wet clay: dark grey-brown
+            r=lerpf(0.22f,0.18f,mud); g=lerpf(0.18f,0.15f,mud); b=lerpf(0.14f,0.11f,mud);
+        } else if(t<0.18f){
+            float f=(t-0.07f)/0.11f;
+            // Dark valley-floor grass: deep green like conifer forest floor
+            r=lerpf(0.14f,0.18f,f)+micro; g=lerpf(0.24f,0.30f,f); b=lerpf(0.08f,0.10f,f);
+            r=lerpf(r,0.20f,mud*0.4f); g=lerpf(g,0.16f,mud*0.3f);
+        } else if(t<0.38f){
+            float f=(t-0.18f)/0.20f;
+            // Mid-slope meadow: vibrant green to yellow-green
+            r=lerpf(0.20f,0.28f,f)+micro; g=lerpf(0.34f,0.40f,f); b=lerpf(0.10f,0.12f,f);
+            // Dry patches go more golden
+            r=lerpf(r,0.38f,dry*0.4f); g=lerpf(g,0.34f,dry*0.3f);
+        } else if(t<0.58f){
+            float f=(t-0.38f)/0.20f;
+            // Transitional: green-brown to dry brown-gold (like mid-altitude scree edge)
+            r=lerpf(0.30f,0.42f,f)+micro; g=lerpf(0.30f,0.32f,f); b=lerpf(0.12f,0.14f,f);
+        } else if(t<0.76f){
+            float f=(t-0.58f)/0.18f;
+            // Rocky scree: warm grey-brown limestone
+            r=lerpf(0.42f,0.52f,f)+micro*0.5f; g=lerpf(0.36f,0.44f,f); b=lerpf(0.28f,0.36f,f);
+        } else {
+            float f=clamp01((t-0.76f)/0.24f);
+            // High peaks: pale grey limestone to near-white snow
+            r=lerpf(0.54f,0.82f,f); g=lerpf(0.54f,0.82f,f); b=lerpf(0.56f,0.86f,f);
+        }
+        // Slope darkening (north-facing = cooler/darker, south = warmer)
+        float slopeShade=n.y*0.55f+0.45f;
+        r*=slopeShade; g*=slopeShade; b*=slopeShade;
         verts.push_back(wx);verts.push_back(wy);verts.push_back(wz);
         verts.push_back(r);verts.push_back(g);verts.push_back(b);
         verts.push_back(n.x);verts.push_back(n.y);verts.push_back(n.z);
@@ -403,7 +471,7 @@ static void streamChunks(float px,float pz){
 }
 
 // ════════════════════════════════════════════════════════════════
-//  Sky
+//  Sky dome
 // ════════════════════════════════════════════════════════════════
 static GLuint g_skyProg=0,g_skyVAO=0;static int g_skyIdxCount=0;
 static void buildSkyDome(){
@@ -439,7 +507,7 @@ static void seedClouds(float px,float pz){
         float sz=22.f+hash(float(i)*3.1f,1.f)*50.f;
         g_clouds.push_back({px+cosf(ang)*r,72.f+hash(float(i)*2.f,4.f)*18.f,
             pz+sinf(ang)*r,sz,sz*(0.30f+hash(float(i)*2.3f,2.f)*0.35f),
-            0.45f+hash(float(i)*0.9f,3.f)*0.42f});
+            0.55f+hash(float(i)*0.9f,3.f)*0.38f});
     }
 }
 
@@ -462,17 +530,18 @@ static float g_jumpVY=0,g_jumpY=0,g_slashT=0,g_bashT=0;
 static bool  g_block=false;
 static float g_stamina=1.f,g_health=1.f,g_staminaTimer=0.f;
 
+// Camera state — persists between frames, NOT passed from Java each frame
 static float g_camYawTarget=0.7f,g_camYaw=0.7f;
-static float g_camPitchTarget=0.42f,g_camPitch=0.42f;
-static float g_camZoomTarget=14.f,g_camZoom=14.f;
+static float g_camPitchTarget=0.35f,g_camPitch=0.35f;
+static float g_camZoom=12.f;  // fixed default, updated by setZoom JNI
 static M4 g_proj; static float g_aspect=1.f;
 
-static float g_dayFrac=0.82f;  // start at night
+static float g_dayFrac=0.30f;  // start mid-morning (0=midnight, 0.25=dawn, 0.5=noon)
 static const float DAY_SPEED=0.000035f;
 static float g_time=0.f;
 
 // ════════════════════════════════════════════════════════════════
-//  Sun/Moon/Ambient
+//  Sun/Moon/Ambient — photorealistic colour temperatures
 // ════════════════════════════════════════════════════════════════
 static void getSunMoon(float df,
     V3& sunDir,V3& sunCol,V3& moonDir,V3& moonCol,
@@ -483,21 +552,25 @@ static void getSunMoon(float df,
     sunDir=v3norm({cosf(angle)*0.95f,sinf(angle),cosf(angle)*0.30f});
     moonDir=v3norm({-sunDir.x,-sunDir.y,-sunDir.z});
     float sunUp=clamp01(sunDir.y),moonUp=clamp01(moonDir.y);
-    sunCol={lerpf(0.90f,0.96f,sunUp),lerpf(0.50f,0.88f,sunUp),lerpf(0.20f,0.80f,sunUp)};
-    moonCol={lerpf(0.28f,0.58f,moonUp),lerpf(0.32f,0.66f,moonUp),lerpf(0.38f,0.84f,moonUp)};
     nightFrac=clamp01(1.f-sunUp*2.8f);
     float day=1.f-nightFrac;
-    ambSky={lerpf(0.04f,0.26f,day)+moonUp*0.07f*nightFrac,
-            lerpf(0.04f,0.32f,day)+moonUp*0.08f*nightFrac,
-            lerpf(0.08f,0.48f,day)+moonUp*0.14f*nightFrac};
-    ambGnd={lerpf(0.01f,0.07f,day),lerpf(0.01f,0.06f,day),lerpf(0.01f,0.05f,day)};
+    // Sun colour: warm white at zenith, deep orange at horizon
+    float sunAngle=clamp01(sunDir.y);
+    sunCol={lerpf(1.00f,0.98f,sunAngle),lerpf(0.55f,0.93f,sunAngle),lerpf(0.15f,0.82f,sunAngle)};
+    moonCol={lerpf(0.30f,0.60f,moonUp),lerpf(0.34f,0.68f,moonUp),lerpf(0.42f,0.88f,moonUp)};
+    // Ambient: realistic sky blue + ground bounce
+    ambSky={lerpf(0.02f,0.28f,day)+moonUp*0.05f*nightFrac,
+            lerpf(0.02f,0.38f,day)+moonUp*0.06f*nightFrac,
+            lerpf(0.04f,0.58f,day)+moonUp*0.12f*nightFrac};
+    ambGnd={lerpf(0.01f,0.08f,day),lerpf(0.01f,0.10f,day),lerpf(0.01f,0.06f,day)};
+    // Fog: midday blue-grey haze, dusk orange, night dark blue
     float dusk=std::max(0.f,1.f-fabsf(df-0.25f)*8.f)+std::max(0.f,1.f-fabsf(df-0.75f)*8.f);
     dusk=clamp01(dusk);
-    fogCol={lerpf(lerpf(0.30f,0.52f,dusk),0.02f,nightFrac),
-            lerpf(lerpf(0.40f,0.36f,dusk),0.02f,nightFrac),
-            lerpf(lerpf(0.58f,0.20f,dusk),0.05f,nightFrac)};
-    fogNear=g_camZoom*2.0f;
-    fogFar =g_camZoom*6.0f+28.f;
+    fogCol={lerpf(lerpf(0.62f,0.82f,dusk),0.03f,nightFrac),
+            lerpf(lerpf(0.72f,0.52f,dusk),0.04f,nightFrac),
+            lerpf(lerpf(0.82f,0.28f,dusk),0.08f,nightFrac)};
+    fogNear=g_camZoom*2.2f;
+    fogFar =g_camZoom*6.5f+30.f;
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -512,15 +585,7 @@ static void drawVAO(GLuint vao,int n,const M4& model,const M4& vp){
 }
 
 // ════════════════════════════════════════════════════════════════
-//  Character  v5
-//
-//  SHIELD FIX: shield is placed in WORLD SPACE at the wrist position,
-//  oriented using the character's world-facing angle (g_facing).
-//  The shield mesh face points in Blender +Y → GL -Z (forward).
-//  We rotate by g_facing around Y so the face always points the same
-//  direction the knight faces, then tilt -90° around X to make the
-//  disc stand upright with the point downward.
-//  This decouples shield orientation from arm swing entirely.
+//  Character
 // ════════════════════════════════════════════════════════════════
 static void drawCharacter(const M4& base,const M4& vp){
     drawVAO(g_vaoTorso, N_TORSO, base, vp);
@@ -529,7 +594,6 @@ static void drawCharacter(const M4& base,const M4& vp){
     M4 mHead=m4mul(base,m4T(0,0.92f,0));
     drawVAO(g_vaoHead,  N_HEAD,  mHead, vp);
 
-    // Right arm — sword
     float swRot=(g_slashT>0)?-2.8f*sinf(g_slashT*3.14159f):-sinf(g_walkT)*0.40f;
     M4 mShouR=m4mul(base,m4T(0.36f,0.70f,0));
     M4 mUA_R=m4mul(mShouR,m4RX(swRot));
@@ -541,7 +605,6 @@ static void drawCharacter(const M4& base,const M4& vp){
     drawVAO(g_vaoHand,N_HAND,mWristR,vp);
     drawVAO(g_vaoSword,N_SWORD,m4mul(mWristR,m4T(0,0,-0.03f)),vp);
 
-    // Left arm — shield
     float shRot=g_block?-1.48f:(g_bashT>0?-1.82f:sinf(g_walkT)*0.40f);
     M4 mShouL=m4mul(base,m4T(-0.36f,0.70f,0));
     M4 mUA_L=m4mul(mShouL,m4RX(shRot));
@@ -552,19 +615,13 @@ static void drawCharacter(const M4& base,const M4& vp){
     M4 mWristL=m4mul(mElbL,m4T(0,0,-0.40f));
     drawVAO(g_vaoHand,N_HAND,mWristL,vp);
 
-    // Shield — world-space: read wrist world pos from translation column
     float shX=mWristL.m[12],shY=mWristL.m[13],shZ=mWristL.m[14];
-    // Shift slightly in front (toward facing direction)
-    float fwdX=sinf(g_facing)*0.12f, fwdZ=-cosf(g_facing)*0.12f;
-    // Block: shield forward/higher; idle: slightly to side and forward
+    float fwdX=sinf(g_facing)*0.12f,fwdZ=-cosf(g_facing)*0.12f;
     float blockLift=g_block?0.12f:0.f;
     M4 mShield=m4mul(
-        m4mul(m4T(shX+fwdX, shY+blockLift, shZ+fwdZ),
-              m4RY(g_facing)),         // face same direction as knight
-        m4RX(-1.5708f));               // upright disc, point down
+        m4mul(m4T(shX+fwdX,shY+blockLift,shZ+fwdZ),m4RY(g_facing)),m4RX(-1.5708f));
     drawVAO(g_vaoShield,N_SHIELD,mShield,vp);
 
-    // Legs
     float lg=sinf(g_walkT)*0.72f;
     M4 mHipR=m4mul(base,m4T(0.20f,0,0));
     M4 mUL_R=m4mul(mHipR,m4RX(-lg));
@@ -588,7 +645,7 @@ extern "C" {
 JNIEXPORT void JNICALL
 Java_com_game_procedural_MainActivity_onCreated(JNIEnv*,jobject){
     g_worldProg  =linkProg(WORLD_VS,  WORLD_FS);
-    g_terrProg   =linkProg(TERR_VS,   WORLD_FS);
+    g_terrProg   =linkProg(TERR_VS,   TERR_FS);
     g_skyProg    =linkProg(SKY_VS,    SKY_FS);
     g_cloudProg  =linkProg(CLOUD_VS,  CLOUD_FS);
     g_foliageProg=linkProg(FOLIAGE_VS,FOLIAGE_FS);
@@ -616,7 +673,7 @@ Java_com_game_procedural_MainActivity_onCreated(JNIEnv*,jobject){
     glEnable(GL_CULL_FACE);glCullFace(GL_BACK);
     glEnable(GL_BLEND);glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
     streamChunks(0,0);seedClouds(0,0);
-    LOGI("EndlessRPG v5 initialised.");
+    LOGI("EndlessRPG v6 photorealistic initialised.");
 }
 
 JNIEXPORT void JNICALL
@@ -626,15 +683,17 @@ Java_com_game_procedural_MainActivity_onChanged(JNIEnv*,jobject,jint w,jint h){
     g_proj=m4persp(1.047f,g_aspect,0.1f,800.f);
 }
 
+// ix,iy = joystick input (-1..1), yaw/pitch = camera angles from Java touch
+// NOTE: zoom is NOT passed here — it is a persistent engine state updated via setZoom
 JNIEXPORT void JNICALL
 Java_com_game_procedural_MainActivity_onDraw(
-    JNIEnv*,jobject,jfloat ix,jfloat iy,jfloat yaw,jfloat pitch,jfloat zoom)
+    JNIEnv*,jobject,jfloat ix,jfloat iy,jfloat yaw,jfloat pitch)
 {
-    g_camYawTarget=yaw;g_camPitchTarget=pitch;g_camZoomTarget=zoom;
+    // Update camera targets from Java touch
+    g_camYawTarget=yaw; g_camPitchTarget=pitch;
     const float LAG=0.12f;
-    g_camYaw  =lerpf(g_camYaw,  g_camYawTarget,  LAG);
-    g_camPitch=lerpf(g_camPitch,g_camPitchTarget,LAG);
-    g_camZoom =lerpf(g_camZoom, g_camZoomTarget, LAG);
+    g_camYaw  =lerpf(g_camYaw,   g_camYawTarget,  LAG);
+    g_camPitch=lerpf(g_camPitch, g_camPitchTarget, LAG);
     g_time+=0.016f;
     g_dayFrac+=DAY_SPEED; if(g_dayFrac>=1.f)g_dayFrac-=1.f;
 
@@ -647,17 +706,19 @@ Java_com_game_procedural_MainActivity_onDraw(
 
     bool moving=fabsf(ix)>0.02f||fabsf(iy)>0.02f;
     if(moving){
+        // ix/iy are joystick-local; rotate into world space using camera yaw
         float sy=sinf(g_camYaw),cy=cosf(g_camYaw);
-        float dx=ix*cy-(-iy)*sy,dz=ix*sy+(-iy)*cy;
+        float dx= ix*cy - (-iy)*sy;
+        float dz= ix*sy + (-iy)*cy;
         float spd=0.11f*(g_block?0.45f:1.f);
-        g_px+=dx*spd;g_pz-=dz*spd;
-        g_facing=atan2f(-dx,dz);g_walkT+=0.16f;
-        g_stamina=std::max(0.f,g_stamina-0.0007f);g_staminaTimer=1.5f;
+        g_px+=dx*spd; g_pz-=dz*spd;
+        g_facing=atan2f(-dx,dz); g_walkT+=0.16f;
+        g_stamina=std::max(0.f,g_stamina-0.0007f); g_staminaTimer=1.5f;
     } else {
         if(g_staminaTimer>0)g_staminaTimer-=0.016f;
         else g_stamina=std::min(1.f,g_stamina+0.0025f);
     }
-    g_jumpY+=g_jumpVY;g_jumpVY-=0.022f;
+    g_jumpY+=g_jumpVY; g_jumpVY-=0.022f;
     float gh=terrH(g_px,g_pz);
     if(g_jumpY<gh){g_jumpY=gh;g_jumpVY=0.f;}
     g_py=g_jumpY;
@@ -697,9 +758,9 @@ Java_com_game_procedural_MainActivity_onDraw(
     glUseProgram(g_skyProg);
     M4 skyView=view;skyView.m[12]=0;skyView.m[13]=0;skyView.m[14]=0;
     glUniformMatrix4fv(glGetUniformLocation(g_skyProg,"uVP"),1,GL_FALSE,m4mul(g_proj,skyView).m);
-    glUniform3f(glGetUniformLocation(g_skyProg,"uSunDir"), sunDir.x,sunDir.y,sunDir.z);
-    glUniform3f(glGetUniformLocation(g_skyProg,"uMoonDir"),moonDir.x,moonDir.y,moonDir.z);
-    glUniform1f(glGetUniformLocation(g_skyProg,"uDayFrac"),g_dayFrac);
+    glUniform3f(glGetUniformLocation(g_skyProg,"uSunDir"),  sunDir.x,sunDir.y,sunDir.z);
+    glUniform3f(glGetUniformLocation(g_skyProg,"uMoonDir"), moonDir.x,moonDir.y,moonDir.z);
+    glUniform1f(glGetUniformLocation(g_skyProg,"uDayFrac"), g_dayFrac);
     glUniform3f(glGetUniformLocation(g_skyProg,"uFogColor"),fogCol.x,fogCol.y,fogCol.z);
     glBindVertexArray(g_skyVAO);
     glDrawElements(GL_TRIANGLES,g_skyIdxCount,GL_UNSIGNED_INT,nullptr);
@@ -716,7 +777,7 @@ Java_com_game_procedural_MainActivity_onDraw(
         glDrawElements(GL_TRIANGLES,ch.idxCount,GL_UNSIGNED_INT,nullptr);
     }
 
-    // 3. WORLD OBJECTS
+    // 3. WORLD OBJECTS (trees, rocks)
     glUseProgram(g_worldProg);
     uMVP=glGetUniformLocation(g_worldProg,"uMVP");
     uMdl=glGetUniformLocation(g_worldProg,"uModel");
@@ -808,12 +869,15 @@ JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_triggerAction(JNIEn
         case 6: if(g_stamina>0.20f){g_bashT=1.f;g_block=false;g_stamina=std::max(0.f,g_stamina-0.20f);}break;
     }
 }
+JNIEXPORT void JNICALL Java_com_game_procedural_MainActivity_setZoom(JNIEnv*,jobject,jfloat z){
+    g_camZoom=std::max(4.f,std::min(40.f,z));
+}
 JNIEXPORT jfloat JNICALL Java_com_game_procedural_MainActivity_getCameraYaw(JNIEnv*,jobject){return g_camYaw;}
 JNIEXPORT jfloat JNICALL Java_com_game_procedural_MainActivity_getStamina(JNIEnv*,jobject){return g_stamina;}
 JNIEXPORT jfloat JNICALL Java_com_game_procedural_MainActivity_getHealth(JNIEnv*,jobject){return g_health;}
-JNIEXPORT void   JNICALL Java_com_game_procedural_MainActivity_setStamina(JNIEnv*,jobject,jfloat v){g_stamina=clamp01(v);}
+JNIEXPORT void   JNICALL Java_com_game_procedural_MainActivity_setStamina(JNIEnv*,jobject,jfloat v){g_stamina=v<0?0:v>1?1:v;}
 
 } // extern "C"
 CPPEOF
 
-echo "[generate_engine.sh] native-lib.cpp written."
+echo "[generate_engine.sh] native-lib.cpp + CMakeLists.txt written (v6 photorealistic)."
