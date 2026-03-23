@@ -1,10 +1,10 @@
 #!/bin/bash
 # File: scripts/setup_project.sh
-# Updated for Realism and Camera-Relative Controls
+# Purpose: Full environment and control logic overhaul
 
-echo "[setup_project.sh] Generating Android/Game logic..."
+echo "[setup_project.sh] Enhancing environment realism and control logic..."
 
-# 1. Generate Activity with Camera-Relative Movement
+# 1. Create the Java Activity with Camera-Relative Movement Logic
 cat <<EOF > app/src/main/java/com/game/procedural/MainActivity.java
 package com.game.procedural;
 
@@ -13,26 +13,19 @@ import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.FrameLayout;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     private GLSurfaceView glView;
-    private View joystickThumb, joystickBase, menuOverlay, compassView, healthBarView, staminaBarView;
-    private float joystickX, joystickY;
-    private float camYaw = 0, camPitch = 0, camZoom = 5.0f;
-    private float lastTouchX, lastTouchY;
-    private boolean isCompassLocked = false;
-    private int frameCount = 0;
+    private float joyX = 0, joyY = 0;
+    private float camYaw = 0, camPitch = 0;
+    private float lastX, lastY;
 
-    // Native methods
+    // JNI Methods
     public native void onCreated();
     public native void onChanged(int w, int h);
-    public native void onDraw(float mvX, float mvZ, float yaw, float pitch, float zoom, float time);
-    public native float getCameraYaw();
-    public native float getStamina();
-    public native float getHealth();
+    public native void onDraw(float moveX, float moveZ, float yaw, float pitch, float time);
 
     static { System.loadLibrary("game_engine"); }
 
@@ -40,39 +33,28 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         setContentView(R.layout.activity_main);
-
         glView = findViewById(R.id.gl_surface_view);
         glView.setEGLContextClientVersion(3);
         glView.setRenderer(this);
 
-        setupControls();
-    }
-
-    private void setupControls() {
-        // UI references and touch listeners for the joystick and orbit camera
-        findViewById(R.id.touch_zone_move).setOnTouchListener((v, event) -> {
-            switch (event.getAction()) {
-                case MotionEvent.ACTION_MOVE:
-                    // Normalize joystick input to -1.0 to 1.0 range
-                    joystickX = (event.getX() - (v.getWidth()/2f)) / (v.getWidth()/2f);
-                    joystickY = (event.getY() - (v.getHeight()/2f)) / (v.getHeight()/2f);
-                    break;
-                case MotionEvent.ACTION_UP:
-                    joystickX = 0; joystickY = 0;
-                    break;
+        // Movement Control (Left Side)
+        findViewById(R.id.touch_zone_move).setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_UP) {
+                joyX = 0; joyY = 0;
+            } else {
+                joyX = (e.getX() - (v.getWidth()/2f)) / (v.getWidth()/2f);
+                joyY = (e.getY() - (v.getHeight()/2f)) / (v.getHeight()/2f);
             }
             return true;
         });
 
-        findViewById(R.id.touch_zone_orbit).setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_MOVE) {
-                float dx = event.getX() - lastTouchX;
-                float dy = event.getY() - lastTouchY;
-                camYaw += dx * 0.01f;
-                camPitch = Math.max(-0.8f, Math.min(0.8f, camPitch + dy * 0.01f));
+        // Camera Orbit (Right Side)
+        findViewById(R.id.touch_zone_orbit).setOnTouchListener((v, e) -> {
+            if (e.getAction() == MotionEvent.ACTION_MOVE) {
+                camYaw += (e.getX() - lastX) * 0.005f;
+                camPitch = Math.max(-1.0f, Math.min(1.0f, camPitch + (e.getY() - lastY) * 0.005f));
             }
-            lastTouchX = event.getX();
-            lastTouchY = event.getY();
+            lastX = e.getX(); lastY = e.getY();
             return true;
         });
     }
@@ -81,68 +63,81 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { onChanged(w, h); }
 
     @Override public void onDrawFrame(GL10 gl) {
-        // --- CORRECTED CONTROLLER INPUT ---
-        // We transform the 2D joystick input into World Space based on the Camera Yaw.
-        // This ensures 'Up' on the joystick is always 'Forward' relative to the camera.
-        
+        // --- CORRECTED MOVEMENT LOGIC ---
+        // We rotate the joystick vector by the camera's Yaw so 'Forward' is relative to view.
         float cosY = (float) Math.cos(camYaw);
         float sinY = (float) Math.sin(camYaw);
 
-        // Map Joystick Y to Z-axis and Joystick X to X-axis
-        // Note: In OpenGL, -Z is forward.
-        float worldMoveX = (joystickX * cosY) - (joystickY * sinY);
-        float worldMoveZ = (joystickX * sinY) + (joystickY * cosY);
+        // In OpenGL (Right-Handed): Forward is -Z, Right is +X
+        // Transform: moveX = joyX*cos - joyY*sin | moveZ = joyX*sin + joyY*cos
+        float worldMoveX = (joyX * cosY) - (joyY * sinY);
+        float worldMoveZ = (joyX * sinY) + (joyY * cosY);
 
         float currentTime = System.currentTimeMillis() / 1000.0f;
-
-        onDraw(worldMoveX, worldMoveZ, camYaw, camPitch, camZoom, currentTime);
-
-        // Update UI (Compass/HUD)
-        updateUI();
-    }
-
-    private void updateUI() {
-        frameCount++;
-        if (frameCount % 6 == 0) {
-            final float yaw = getCameraYaw();
-            final float sta = getStamina();
-            final float hp  = getHealth();
-            runOnUiThread(() -> {
-                findViewById(R.id.compass).setRotation(-(float) Math.toDegrees(yaw));
-                findViewById(R.id.health_bar).setScaleX(hp);
-                findViewById(R.id.stamina_bar).setScaleX(sta);
-            });
-        }
+        onDraw(worldMoveX, worldMoveZ, camYaw, camPitch, currentTime);
     }
 }
 EOF
 
-# 2. Update Shader for Realistic Foliage Sway
-# This creates a 'wind' effect by shifting vertices based on their height (Y).
-cat <<EOF > app/src/main/assets/shaders/foliage.vert
+# 2. Create Realistic Environment Vertex Shader (Wind Sway)
+cat <<EOF > app/src/main/assets/shaders/environment.vert
 #version 300 es
-layout(location = 0) in vec3 aPosition;
-layout(location = 1) in vec2 aTexCoord;
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aTex;
+layout(location = 2) in vec3 aNormal;
 
 uniform mat4 uMVP;
 uniform float uTime;
 uniform bool uIsFoliage;
 
-out vec2 vTexCoord;
+out vec2 vTex;
+out float vFogDepth;
 
 void main() {
-    vec3 pos = aPosition;
-    
-    if(uIsFoliage && pos.y > 0.1) {
-        // Procedural wind sway: Sine wave based on time and vertical height
-        float sway = sin(uTime * 2.0 + pos.x + pos.z) * (pos.y * 0.15);
+    vec3 pos = aPos;
+
+    if (uIsFoliage) {
+        // Apply wind sway based on height (Y) and time
+        // The higher the vertex, the more it moves.
+        float sway = sin(uTime * 1.5 + pos.x * 0.5) * (pos.y * 0.12);
         pos.x += sway;
         pos.z += sway * 0.5;
     }
-    
-    vTexCoord = aTexCoord;
+
     gl_Position = uMVP * vec4(pos, 1.0);
+    vTex = aTex;
+    
+    // Pass depth for atmospheric fog
+    vFogDepth = -(uMVP * vec4(pos, 1.0)).z;
 }
 EOF
 
-echo "[setup_project.sh] Logic and Shaders updated for realism."
+# 3. Create Atmospheric Fragment Shader (Fog & Light)
+cat <<EOF > app/src/main/assets/shaders/environment.frag
+#version 300 es
+precision highp float;
+
+in vec2 vTex;
+in float vFogDepth;
+uniform sampler2D uTexture;
+uniform vec3 uFogColor;
+
+out vec4 fragColor;
+
+void main() {
+    vec4 texColor = texture(uTexture, vTex);
+    
+    // Atmospheric Fog Calculation (Exponential)
+    float fogDensity = 0.015;
+    float fogFactor = exp(-pow(vFogDepth * fogDensity, 2.0));
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+
+    // Blend the texture color with the forest haze
+    vec3 finalRGB = mix(uFogColor, texColor.rgb, fogFactor);
+    fragColor = vec4(finalRGB, texColor.a);
+    
+    if(fragColor.a < 0.1) discard; // Transparency for leaves/grass
+}
+EOF
+
+echo "[setup_project.sh] Complete. Environment files ready for deployment."
