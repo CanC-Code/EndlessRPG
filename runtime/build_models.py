@@ -1,126 +1,88 @@
 # File: runtime/build_models.py
-# Master Blender bake script for EndlessRPG v4.
-# Imports each modular model from runtime/models/ and runtime/models/equipment/,
-# bakes them with per-vertex Lambertian shading + vertical AO, writes AllModels.h.
-#
-# Run via: blender --background -noaudio --python runtime/build_models.py
-# Blender sets CWD to project root.
+# EndlessRPG v5 — Blender bake script.
+# Pencil-art colour palette: muted, desaturated, graphite-leaning.
+# All hue saturation is approximately 30-40% of full colour.
 
 import sys, os
 sys.path.insert(0, os.path.abspath("runtime"))
-
-import bpy
-import bmesh
+import bpy, bmesh
 
 from models.character import (build_torso, build_neck, build_head,
                                build_upper_limb, build_lower_limb,
                                build_hand, build_foot, build_rock)
-from models.tree              import build_tree
-from models.equipment.sword   import build_sword
-from models.equipment.shield  import build_shield
+from models.tree             import build_tree
+from models.equipment.sword  import build_sword
+from models.equipment.shield import build_shield
 
 OUTPUT_PATH = "app/src/main/cpp/models/AllModels.h"
 
 
-# ─────────────────────────────────────────────────────────────
-#  Export helper
-# ─────────────────────────────────────────────────────────────
-def export_model(name: str, r: float, g: float, b: float,
-                 build_func, out_handle, seed=None):
-    """
-    Calls build_func(), triangulates, bakes per-vertex colour
-    with Lambertian shading + vertical AO, writes C array.
-    Coordinate remap: Blender Z-up → OpenGL Y-up:
-        GL(x, y, z) = Blender(x, z, -y)
-    """
+def export_model(name, r, g, b, build_func, fh, seed=None):
     if seed is not None:
         import random; random.seed(seed)
-
     build_func()
-
     obj = bpy.context.active_object
     if obj is None or obj.type != 'MESH':
-        print(f"  SKIP {name}: no active mesh"); return
-
+        print(f"  SKIP {name}"); return
     bpy.ops.object.convert(target='MESH')
-
     mesh = obj.data
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bmesh.ops.triangulate(bm, faces=bm.faces)
-    bm.to_mesh(mesh)
-    bm.free()
-    mesh.calc_normals_split()
-    mesh.update()
-
-    zs     = [v.co.z for v in mesh.vertices]
-    min_z  = min(zs) if zs else 0.0
+    bm = bmesh.new(); bm.from_mesh(mesh)
+    bmesh.ops.triangulate(bm, faces=bm.faces); bm.to_mesh(mesh); bm.free()
+    mesh.calc_normals_split(); mesh.update()
+    zs = [v.co.z for v in mesh.vertices]
+    min_z = min(zs) if zs else 0.0
     height = (max(zs) - min_z) if zs else 1.0
-
-    # Mid-morning sun direction (normalised), matches engine start dayFrac≈0.45
+    # Mid-morning bake sun — matches engine start g_dayFrac≈0.82 (night)
+    # We bake at a moderate angle so forms read clearly
     SX, SY, SZ = 0.2357, 0.9428, 0.2357
-
     verts = []
     for tri in mesh.loop_triangles:
         for li in tri.loops:
-            v  = mesh.vertices[mesh.loops[li].vertex_index]
+            v = mesh.vertices[mesh.loops[li].vertex_index]
             sn = mesh.loops[li].normal
-
-            # Blender→GL normal remap
             nx, ny, nz = sn.x, sn.z, -sn.y
-            diff  = max(nx * SX + ny * SY + nz * SZ, 0.0)
-            shade = 0.30 + 0.70 * diff    # slightly deeper shadow range
-
-            # Vertical AO: darken underside
-            ao = 0.50 + 0.50 * ((v.co.z - min_z) / height) if height > 0.001 else 1.0
-
-            # Micro surface variation: subtle noise per vertex
-            noise = 1.0 + (((v.co.x * 127.1 + v.co.y * 311.7) % 1.0) - 0.5) * 0.04
-
+            diff = max(nx*SX + ny*SY + nz*SZ, 0.0)
+            shade = 0.28 + 0.72 * diff
+            ao = 0.48 + 0.52 * ((v.co.z - min_z) / height) if height > 0.001 else 1.0
+            # Micro grain
+            noise = 1.0 + (((v.co.x*127.1 + v.co.y*311.7) % 1.0) - 0.5) * 0.045
             factor = shade * ao * noise
-
-            # Blender Z-up → OpenGL Y-up
-            verts += [v.co.x,  v.co.z, -v.co.y,
-                      r * factor, g * factor, b * factor]
-
+            # Pencil desaturate baked colour
+            rc, gc_, bc = r*factor, g*factor, b*factor
+            grey = (rc + gc_ + bc) / 3.0
+            desat = 0.32
+            rc = rc*(1-desat) + grey*desat
+            gc_ = gc_*(1-desat) + grey*desat
+            bc = bc*(1-desat) + grey*desat
+            verts += [v.co.x, v.co.z, -v.co.y, rc, gc_, bc]
     count = len(verts) // 6
-    out_handle.write(
-        f"const float M_{name}[] = {{ {', '.join(f'{x:.5f}f' for x in verts)} }};\n"
-        f"const int   N_{name} = {count};\n\n")
-    print(f"  {name}: {count} vertices")
+    fh.write(f"const float M_{name}[] = {{ {', '.join(f'{x:.5f}f' for x in verts)} }};\n"
+             f"const int   N_{name} = {count};\n\n")
+    print(f"  {name}: {count} verts")
 
 
-# ─────────────────────────────────────────────────────────────
-#  Model registry  (name, R, G, B, builder)
-# ─────────────────────────────────────────────────────────────
+# Pencil-art palette — muted steel, earth, graphite-green
 MODELS = [
-    # ── Character body parts ──────────────────────────────────
-    ("TORSO",    0.28, 0.32, 0.38,  build_torso),      # slate armour
-    ("NECK",     0.80, 0.64, 0.50,  build_neck),       # skin
-    ("HEAD",     0.82, 0.65, 0.50,  build_head),       # skin
-    ("UP_LIMB",  0.28, 0.32, 0.38,  build_upper_limb), # armour
-    ("LOW_LIMB", 0.28, 0.32, 0.38,  build_lower_limb), # armour
-    ("HAND",     0.24, 0.22, 0.20,  build_hand),       # dark gauntlet
-    ("FOOT",     0.18, 0.15, 0.12,  build_foot),       # dark leather boot
+    ("TORSO",    0.26, 0.28, 0.32,  build_torso),       # dark steel
+    ("NECK",     0.60, 0.50, 0.42,  build_neck),        # skin, muted
+    ("HEAD",     0.30, 0.32, 0.34,  build_head),        # helmet steel
+    ("UP_LIMB",  0.28, 0.30, 0.34,  build_upper_limb),  # armour
+    ("LOW_LIMB", 0.26, 0.28, 0.32,  build_lower_limb),  # armour
+    ("HAND",     0.22, 0.20, 0.18,  build_hand),        # dark gauntlet
+    ("FOOT",     0.20, 0.18, 0.16,  build_foot),        # sabaton
 
-    # ── Equipment ─────────────────────────────────────────────
-    ("SWORD",    0.72, 0.74, 0.78,  build_sword),      # polished steel
-    ("SHIELD",   0.40, 0.27, 0.14,  build_shield),     # oak wood
+    ("SWORD",    0.58, 0.60, 0.64,  build_sword),       # graphite steel
+    ("SHIELD",   0.32, 0.24, 0.16,  build_shield),      # dark oak
 
-    # ── Environment ───────────────────────────────────────────
-    ("TREE",     0.15, 0.42, 0.12,  lambda: build_tree(42)),
-    ("ROCK",     0.46, 0.44, 0.42,  build_rock),
+    ("TREE",     0.14, 0.22, 0.12,  lambda: build_tree(42)),  # pencil green
+    ("ROCK",     0.38, 0.36, 0.34,  build_rock),        # grey stone
 ]
 
-
-# ─────────────────────────────────────────────────────────────
-#  Main
-# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    print(f"\nEndlessRPG v4 — Baking {len(MODELS)} models → {OUTPUT_PATH}")
+    print(f"\nEndlessRPG v5 — Baking {len(MODELS)} models → {OUTPUT_PATH}")
     with open(OUTPUT_PATH, "w") as fh:
-        fh.write("// Auto-generated by runtime/build_models.py v4 — DO NOT EDIT\n")
+        fh.write("// Auto-generated by runtime/build_models.py v5 — DO NOT EDIT\n")
         fh.write("#pragma once\n\n")
         for name, r, g, b, func in MODELS:
             export_model(name, r, g, b, func, fh)
