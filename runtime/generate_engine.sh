@@ -19,7 +19,9 @@ cat << 'CPPEOF' > app/src/main/cpp/native-lib.cpp
 // ════════════════════════════════════════════════════════════════
 //  EndlessRPG  —  native-lib.cpp
 //  OpenGL ES 3.0  |  Android NDK  |  JNI
-//  v3.0 — Infinite world, sky dome, sun/moon/stars/clouds
+//  v3.1 — Infinite world, sky dome, sun/moon/stars/clouds
+//         Fixed: shield orientation, sword grip, sky/horizon seam,
+//                world object day/night ambient scaling
 // ════════════════════════════════════════════════════════════════
 #include <jni.h>
 #include <GLES3/gl3.h>
@@ -158,7 +160,10 @@ static GLuint makeVAOraw(const float* d,size_t bytes,int stride,
 //  SHADERS
 // ════════════════════════════════════════════════════════════════
 
-// ── World (terrain + objects) ───────────────────────────────────
+// ── World objects (character, trees, rocks) ─────────────────────
+// FIX: vCol is Lambertian+AO already baked; we scale by a hemisphere
+//      ambient tint so objects respond to day/night, then add specular.
+//      No second Lambertian multiply — that would double-darken everything.
 static const char* WORLD_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos;
@@ -173,9 +178,10 @@ void main(){
     vec4 wp = uModel * vec4(aPos, 1.0);
     vWorldPos = wp.xyz;
     vCol      = aCol;
-    // Approximate normal from model rotation (unit-cube models)
-    vNormal   = normalize(mat3(uModel) * vec3(0.0,1.0,0.0));
-    gl_Position = uMVP * vec4(aPos,1.0);
+    // Derive surface normal from model's up direction for hemisphere
+    // ambient and specular — baked colour already has diffuse encoded.
+    vNormal   = normalize(mat3(uModel) * vec3(0.0, 1.0, 0.0));
+    gl_Position = uMVP * vec4(aPos, 1.0);
 }
 )GLSL";
 
@@ -185,7 +191,7 @@ in vec3 vCol;
 in vec3 vWorldPos;
 in vec3 vNormal;
 uniform vec3  uSunDir;
-uniform vec3  uSunColor;   // tinted by time-of-day
+uniform vec3  uSunColor;
 uniform vec3  uAmbientSky;
 uniform vec3  uAmbientGnd;
 uniform vec3  uCamPos;
@@ -194,32 +200,32 @@ uniform float uFogFar;
 uniform vec3  uFogColor;
 out vec4 FragColor;
 void main(){
-    // Hemisphere ambient
-    float hemi = vNormal.y * 0.5 + 0.5;
-    vec3 amb   = mix(uAmbientGnd, uAmbientSky, hemi);
+    // vCol already has Lambertian + AO baked in at model-build time.
+    // Scale by hemisphere ambient so objects dim at night / brighten at noon.
+    float hemi     = vNormal.y * 0.5 + 0.5;
+    vec3  ambScale = mix(uAmbientGnd, uAmbientSky, hemi);
+    // Normalise against noon reference so baked colours stay accurate at midday.
+    vec3  ambTint  = ambScale / vec3(0.40, 0.50, 0.68);
+    vec3  lit      = vCol * clamp(ambTint, 0.08, 1.4);
 
-    // Lambertian diffuse
-    float NdL  = max(dot(vNormal, uSunDir), 0.0);
-    vec3  diff = vCol * uSunColor * NdL * 0.80;
-
-    // Blinn-Phong specular (subtle)
-    vec3  V    = normalize(uCamPos - vWorldPos);
-    vec3  H    = normalize(uSunDir + V);
-    float sp   = pow(max(dot(vNormal,H),0.0), 48.0);
-    vec3  spec = uSunColor * 0.08 * sp;
-
-    vec3 lit   = amb * vCol + diff + spec;
+    // Subtle Blinn-Phong specular on top (not baked, so always additive)
+    vec3  V   = normalize(uCamPos - vWorldPos);
+    vec3  H   = normalize(uSunDir + V);
+    float sp  = pow(max(dot(vNormal, H), 0.0), 48.0);
+    lit      += uSunColor * 0.05 * sp;
 
     // Exponential quadratic fog
     float dist = length(uCamPos - vWorldPos);
-    float fog  = clamp((dist - uFogNear)/(uFogFar - uFogNear), 0.0, 1.0);
-    fog = fog*fog;
+    float fog  = clamp((dist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
+    fog = fog * fog;
     vec3 color = mix(lit, uFogColor, fog);
     FragColor  = vec4(color, 1.0);
 }
 )GLSL";
 
 // ── Sky dome ────────────────────────────────────────────────────
+// FIX: uFogColor uniform added; horizon blended toward fog colour so
+//      sky and terrain meet seamlessly at all times of day.
 static const char* SKY_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec3 aPos;
@@ -238,14 +244,13 @@ in vec3 vDir;
 uniform vec3  uSunDir;
 uniform vec3  uMoonDir;
 uniform float uDayFrac;   // 0=midnight, 0.5=noon, 1=midnight
+uniform vec3  uFogColor;  // matches C++ fogCol — locks horizon colour
 out vec4 FragColor;
 
-// Sky colour at a given normalised direction
 vec3 skyColor(vec3 dir, vec3 sun, float dayFrac){
-    float up  = max(dir.y, 0.0);
+    float up      = max(dir.y, 0.0);
     float sun_ang = max(dot(dir, sun), 0.0);
 
-    // Zenith/horizon colours blended by time-of-day
     vec3 zenithDay   = vec3(0.18, 0.38, 0.80);
     vec3 horizDay    = vec3(0.60, 0.75, 0.92);
     vec3 zenithDusk  = vec3(0.08, 0.08, 0.25);
@@ -253,8 +258,8 @@ vec3 skyColor(vec3 dir, vec3 sun, float dayFrac){
     vec3 zenithNight = vec3(0.01, 0.01, 0.06);
     vec3 horizNight  = vec3(0.04, 0.04, 0.10);
 
-    float dusk = smoothstep(0.0, 0.18, dayFrac) * (1.0 - smoothstep(0.18, 0.36, dayFrac))
-               + smoothstep(0.64, 0.82, dayFrac) * (1.0 - smoothstep(0.82, 1.0, dayFrac));
+    float dusk  = smoothstep(0.0, 0.18, dayFrac) * (1.0 - smoothstep(0.18, 0.36, dayFrac))
+                + smoothstep(0.64, 0.82, dayFrac) * (1.0 - smoothstep(0.82, 1.0, dayFrac));
     float night = 1.0 - smoothstep(0.15, 0.35, dayFrac) * smoothstep(0.85, 0.65, dayFrac);
     float day   = 1.0 - dusk - night * 0.5;
 
@@ -263,45 +268,51 @@ vec3 skyColor(vec3 dir, vec3 sun, float dayFrac){
     vec3 sky    = mix(horiz, zenith, up);
 
     // Mie scatter glow around sun
-    float glow  = pow(sun_ang, 6.0) * 0.45;
-    vec3 glowCol = mix(vec3(1.0,0.85,0.55), vec3(1.0,0.95,0.75), dayFrac);
+    float glow    = pow(sun_ang, 6.0) * 0.45;
+    vec3  glowCol = mix(vec3(1.0, 0.85, 0.55), vec3(1.0, 0.95, 0.75), dayFrac);
     sky += glowCol * glow;
     return sky;
 }
 
 // Simple 2-level hash noise for stars
 float starNoise(vec3 d){
-    vec3 f = floor(d * 180.0);
+    vec3  f = floor(d * 180.0);
     float s = sin(f.x*127.1 + f.y*311.7 + f.z*74.9)*43758.5;
     return s - floor(s);
 }
 
 void main(){
-    vec3 dir  = normalize(vDir);
-    float dayFrac = uDayFrac;   // 0..1 wrapped
+    vec3  dir     = normalize(vDir);
+    float dayFrac = uDayFrac;
 
     // Base atmospheric sky
     vec3 col = skyColor(dir, uSunDir, dayFrac);
 
+    // FIX: blend toward fogCol at the horizon so terrain fog seam disappears.
+    // Quadratic ramp: at dir.y==0 blend is 0.85; at dir.y>0.17 blend is 0.
+    float horizBlend = clamp(1.0 - dir.y * 6.0, 0.0, 1.0);
+    horizBlend = horizBlend * horizBlend;
+    col = mix(col, uFogColor, horizBlend * 0.85);
+
     // Sun disc
     float sunA = dot(dir, uSunDir);
     float disc  = smoothstep(0.9990, 0.9998, sunA);
-    float halo  = pow(max(sunA,0.0), 22.0) * 0.6;
+    float halo  = pow(max(sunA, 0.0), 22.0) * 0.6;
     float night = 1.0 - smoothstep(0.1, 0.3, dayFrac) * smoothstep(0.9, 0.7, dayFrac);
     float dayt  = 1.0 - night;
     col += vec3(1.0, 0.97, 0.80) * disc * dayt;
     col += vec3(1.0, 0.85, 0.50) * halo * dayt;
 
     // Moon disc (opposite sun, visible at night)
-    float moonA = dot(dir, uMoonDir);
+    float moonA    = dot(dir, uMoonDir);
     float moonDisc = smoothstep(0.9993, 0.9999, moonA);
     col += vec3(0.85, 0.88, 0.95) * moonDisc * night;
     // Moon glow
-    col += vec3(0.20, 0.22, 0.30) * pow(max(moonA,0.0), 30.0) * night * 0.5;
+    col += vec3(0.20, 0.22, 0.30) * pow(max(moonA, 0.0), 30.0) * night * 0.5;
 
     // Stars (only at night, only upward hemisphere)
     if(dir.y > 0.0 && night > 0.01){
-        float star = starNoise(dir);
+        float star    = starNoise(dir);
         float twinkle = smoothstep(0.994, 1.0, star);
         col += vec3(0.9, 0.9, 1.0) * twinkle * night * dir.y;
     }
@@ -314,7 +325,7 @@ void main(){
 static const char* CLOUD_VS = R"GLSL(#version 300 es
 precision highp float;
 layout(location=0) in vec2 aUV;
-uniform vec3  uCloudPos;   // world position of cloud centre
+uniform vec3  uCloudPos;
 uniform vec2  uSize;
 uniform mat4  uVP;
 uniform vec3  uCamRight;
@@ -334,7 +345,6 @@ precision highp float;
 in vec2 vUV;
 uniform float uAlpha;
 out vec4 FragColor;
-// Procedural soft cloud via radial gradient + simple noise
 float hash2(vec2 p){ float s=sin(p.x*127.1+p.y*311.7)*43758.5; return s-floor(s); }
 float noise2(vec2 p){
     vec2 i=floor(p),f=p-i,u=f*f*(3.0-2.0*f);
@@ -342,17 +352,14 @@ float noise2(vec2 p){
                mix(hash2(i+vec2(0,1)),hash2(i+vec2(1,1)),u.x),u.y);
 }
 void main(){
-    vec2 c = vUV - 0.5;
-    float r = length(c) * 2.0;
-    // Soft edge
-    float base = max(0.0, 1.0 - r * r);
-    // Add noise detail
-    float n = noise2(vUV * 5.0) * 0.4 + noise2(vUV * 11.0) * 0.15;
+    vec2  c       = vUV - 0.5;
+    float r       = length(c) * 2.0;
+    float base    = max(0.0, 1.0 - r * r);
+    float n       = noise2(vUV * 5.0) * 0.4 + noise2(vUV * 11.0) * 0.15;
     float density = clamp(base + n - 0.25, 0.0, 1.0);
-    float alpha = density * uAlpha;
-    // Slightly grey underside, white top
-    float lit = 0.75 + vUV.y * 0.25;
-    vec3 col  = vec3(lit);
+    float alpha   = density * uAlpha;
+    float lit     = 0.75 + vUV.y * 0.25;
+    vec3  col     = vec3(lit);
     if(alpha < 0.01) discard;
     FragColor = vec4(col, alpha);
 }
@@ -370,11 +377,11 @@ out vec3 vCol;
 out vec3 vWorldPos;
 out vec3 vNormal;
 void main(){
-    vec4 wp = uModel * vec4(aPos,1.0);
+    vec4 wp   = uModel * vec4(aPos, 1.0);
     vWorldPos = wp.xyz;
     vCol      = aCol;
     vNormal   = normalize(mat3(uModel) * aNorm);
-    gl_Position = uMVP * vec4(aPos,1.0);
+    gl_Position = uMVP * vec4(aPos, 1.0);
 }
 )GLSL";
 
@@ -383,12 +390,12 @@ void main(){
 // ════════════════════════════════════════════════════════════════
 //  Terrain streaming
 // ════════════════════════════════════════════════════════════════
-static const int   CHUNK  = 32;          // cells per chunk side
-static const float CELL   = 1.0f;        // metres per cell
-static const int   CRAD   = 4;           // chunk render radius (in each dir)
+static const int   CHUNK  = 32;
+static const float CELL   = 1.0f;
+static const int   CRAD   = 4;
 
 struct TerrainChunk {
-    int cx, cz;         // chunk coords
+    int cx, cz;
     GLuint vao=0, vbo=0, ebo=0;
     int idxCount=0;
     bool built=false;
@@ -402,7 +409,7 @@ static void buildChunk(TerrainChunk& c){
     float ox = c.cx * CHUNK * CELL;
     float oz = c.cz * CHUNK * CELL;
 
-    std::vector<float>    verts;  // x,y,z, r,g,b, nx,ny,nz  → stride=9
+    std::vector<float>    verts;
     std::vector<uint32_t> idx;
     verts.reserve(N*N*9);
     idx  .reserve(CHUNK*CHUNK*6);
@@ -413,18 +420,18 @@ static void buildChunk(TerrainChunk& c){
             float wy=terrH(wx,wz);
             V3 n=terrNormal(wx,wz);
 
-            // Height-based palette
+            // FIX: smoother grass→earth transition; lerp() used throughout
             float t=clamp01(wy/8.0f);
             float r,g,b;
-            if(t<0.10f){       // water/mud edge
-                r=0.25f;g=0.18f;b=0.10f;
-            } else if(t<0.38f){// lush grass
-                float f=(t-0.10f)/0.28f;
-                r=0.14f+f*0.07f; g=0.42f-f*0.04f; b=0.10f+f*0.03f;
-            } else if(t<0.68f){// dry grass / earth
-                float f=(t-0.38f)/0.30f;
-                r=0.32f+f*0.18f; g=0.30f-f*0.08f; b=0.14f-f*0.04f;
-            } else {           // rock / snowcap approach
+            if(t<0.10f){                        // water/mud edge
+                r=0.25f; g=0.18f; b=0.10f;
+            } else if(t<0.42f){                 // lush grass (widened band)
+                float f=(t-0.10f)/0.32f;
+                r=0.13f+f*0.08f; g=0.43f-f*0.05f; b=0.10f+f*0.03f;
+            } else if(t<0.68f){                 // dry grass / earth — smooth lerp
+                float f=(t-0.42f)/0.26f;
+                r=lerp(0.21f,0.50f,f); g=lerp(0.38f,0.22f,f); b=lerp(0.13f,0.10f,f);
+            } else {                            // rock / snowcap approach
                 float f=clamp01((t-0.68f)/0.32f);
                 r=0.46f+f*0.22f; g=0.42f+f*0.20f; b=0.38f+f*0.22f;
             }
@@ -439,8 +446,8 @@ static void buildChunk(TerrainChunk& c){
     }
     for(int z=0;z<CHUNK;z++) for(int x=0;x<CHUNK;x++){
         uint32_t s=z*N+x;
-        idx.push_back(s);     idx.push_back(s+N); idx.push_back(s+1);
-        idx.push_back(s+1);   idx.push_back(s+N); idx.push_back(s+N+1);
+        idx.push_back(s);   idx.push_back(s+N); idx.push_back(s+1);
+        idx.push_back(s+1); idx.push_back(s+N); idx.push_back(s+N+1);
     }
     c.idxCount=(int)idx.size();
 
@@ -450,10 +457,10 @@ static void buildChunk(TerrainChunk& c){
     glBufferData(GL_ARRAY_BUFFER,verts.size()*4,verts.data(),GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,c.ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER,idx.size()*4,idx.data(),GL_STATIC_DRAW);
-    const int stride=36; // 9 floats * 4
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);   glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)12);  glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,stride,(void*)24);  glEnableVertexAttribArray(2);
+    const int stride=36;
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,stride,(void*)0);  glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,stride,(void*)12); glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2,3,GL_FLOAT,GL_FALSE,stride,(void*)24); glEnableVertexAttribArray(2);
     glBindVertexArray(0);
     c.built=true;
 }
@@ -462,7 +469,6 @@ static void streamChunks(float px,float pz){
     int pcx=(int)floorf(px/(CHUNK*CELL));
     int pcz=(int)floorf(pz/(CHUNK*CELL));
 
-    // Remove far chunks
     g_chunks.erase(std::remove_if(g_chunks.begin(),g_chunks.end(),
         [&](TerrainChunk& c){
             bool far=abs(c.cx-pcx)>CRAD+1||abs(c.cz-pcz)>CRAD+1;
@@ -470,7 +476,6 @@ static void streamChunks(float px,float pz){
             return far;
         }),g_chunks.end());
 
-    // Add new chunks
     for(int dz=-CRAD;dz<=CRAD;dz++) for(int dx=-CRAD;dx<=CRAD;dx++){
         int tx=pcx+dx,tz=pcz+dz;
         bool exists=false;
@@ -489,8 +494,7 @@ static GLuint g_skyProg=0, g_skyVAO=0;
 static int g_skyIdxCount=0;
 
 static void buildSkyDome(){
-    // Icosphere-style sphere triangulation (UV sphere, 24×12)
-    std::vector<float> verts;
+    std::vector<float>    verts;
     std::vector<uint32_t> idx;
     const int stacks=14, slices=24;
     for(int st=0;st<=stacks;st++){
@@ -527,13 +531,12 @@ static const float CLOUD_UV[]={0,0, 1,0, 1,1, 0,0, 1,1, 0,1};
 
 struct Cloud { float wx,wy,wz, sizeX,sizeY, alpha; };
 
-// 16 procedurally placed clouds at high altitude
 static std::vector<Cloud> g_clouds;
-static float g_cloudOffX=0;  // drift offset
+static float g_cloudOffX=0;
 
 static void seedClouds(float px,float pz){
     g_clouds.clear();
-    float base=80.0f; // altitude
+    float base=80.0f;
     for(int i=0;i<16;i++){
         float ang=i*(6.2832f/16.f);
         float r=60.f+hash(float(i)*1.7f,0.f)*120.f;
@@ -565,8 +568,8 @@ static M4    g_proj;
 static float g_aspect=1.f;
 
 // Time of day: 0=midnight,0.25=dawn,0.5=noon,0.75=dusk,1=midnight
-static float g_dayFrac=0.45f;         // start at mid-morning
-static const float DAY_SPEED=0.00005f; // full cycle every ~20k frames
+static float g_dayFrac=0.45f;
+static const float DAY_SPEED=0.00005f;
 
 // ════════════════════════════════════════════════════════════════
 //  Sun / ambient computation from day fraction
@@ -578,24 +581,20 @@ static void getSunMoon(float df,
     V3& fogCol,
     float& fogNear, float& fogFar)
 {
-    // Sun moves on a great circle (tilted 30° from east-west)
-    float angle=df*6.2832f-1.5708f;  // 0 = sunrise
+    float angle=df*6.2832f-1.5708f;
     sunDir=v3norm({cosf(angle)*0.95f, sinf(angle), cosf(angle)*0.30f});
     moonDir=v3norm({-sunDir.x,-sunDir.y,-sunDir.z});
 
-    // Sun colour: noon=white, horizon=orange, night=none
     float sunUp=clamp01(sunDir.y);
     sunCol={lerp(0.98f,1.00f,sunUp),
             lerp(0.60f,0.96f,sunUp),
             lerp(0.30f,0.88f,sunUp)};
 
-    // Ambient sky/ground
     float night=clamp01(1.f-sunUp*3.f);
     float day=1.f-night;
     ambSky={lerp(0.05f,0.40f,day), lerp(0.05f,0.50f,day), lerp(0.12f,0.68f,day)};
     ambGnd={lerp(0.02f,0.12f,day), lerp(0.02f,0.11f,day), lerp(0.02f,0.08f,day)};
 
-    // Fog: blue daytime, orange dusk, dark night
     float dusk=std::max(0.f,1.f-fabsf(df-0.25f)*8.f)+
                std::max(0.f,1.f-fabsf(df-0.75f)*8.f);
     dusk=clamp01(dusk);
@@ -628,7 +627,8 @@ static void drawCharacter(const M4& base,const M4& vp){
     // Head
     drawVAO(g_vaoHead,  N_HEAD,  m4mul(base,m4T(0,.92f,0)), vp);
 
-    // Right arm (sword) — swings forward on attack
+    // ── Right arm (sword) ──────────────────────────────────────
+    // swRot: negative = arm swings forward (attack), positive = arm back (idle swing)
     float swRot=(g_slashT>0)?-2.4f*sinf(g_slashT*3.14159f):-sinf(g_walkT)*.46f;
     M4 mRA=m4mul(m4mul(base,m4T(.41f,.54f,0)),m4RX(swRot));
     drawVAO(g_vaoUpLimb,  N_UP_LIMB,  mRA, vp);
@@ -636,20 +636,27 @@ static void drawCharacter(const M4& base,const M4& vp){
     drawVAO(g_vaoLowLimb, N_LOW_LIMB, mRF, vp);
     M4 mRH=m4mul(mRF,m4T(0,-.41f,0));
     drawVAO(g_vaoFoot,    N_FOOT,     mRH, vp);
-    // Sword in right hand
-    drawVAO(g_vaoSword,   N_SWORD,    m4mul(mRH,m4T(0,-.25f,0)), vp);
 
-    // Left arm (shield) — raised when blocking
+    // FIX: sword — pommel in palm, blade extends upward (+Y in GL space).
+    // The arm chain already carries swRot so the slash arc is correct.
+    // Small forward (Z) offset clears the wrist geometry.
+    M4 mSwPos = m4mul(mRH, m4T(0.0f, 0.04f, 0.06f));
+    drawVAO(g_vaoSword, N_SWORD, mSwPos, vp);
+
+    // ── Left arm (shield) ──────────────────────────────────────
     float shRot=g_block?-1.52f:(g_bashT>0?-1.78f: sinf(g_walkT)*.46f);
     M4 mLA=m4mul(m4mul(base,m4T(-.41f,.54f,0)),m4RX(shRot));
     drawVAO(g_vaoUpLimb,  N_UP_LIMB,  mLA, vp);
     M4 mLF=m4mul(mLA,m4T(0,-.44f,0));
     drawVAO(g_vaoLowLimb, N_LOW_LIMB, mLF, vp);
-    // Shield on left forearm
-    M4 mSh=m4mul(m4mul(mLF,m4T(0,-.18f,.09f)),m4RX(1.5708f));
-    drawVAO(g_vaoShield,  N_SHIELD,   mSh, vp);
 
-    // Legs with knee bend
+    // FIX: shield — face points forward (-Z world), long axis vertical (+Y).
+    // No extra rotation needed; mesh authored correctly in shield.py.
+    // Forward Z offset pushes the shield face in front of the forearm.
+    M4 mSh = m4mul(mLF, m4T(0.0f, -0.18f, 0.16f));
+    drawVAO(g_vaoShield, N_SHIELD, mSh, vp);
+
+    // ── Legs with knee bend ────────────────────────────────────
     float lg=sinf(g_walkT)*.68f;
     // Right leg
     M4 mRL=m4mul(m4mul(base,m4T(.20f,-.09f,0)),m4RX(-lg));
@@ -672,13 +679,11 @@ extern "C" {
 
 JNIEXPORT void JNICALL
 Java_com_game_procedural_MainActivity_onCreated(JNIEnv*,jobject){
-    // Programs
     g_worldProg = linkProg(WORLD_VS, WORLD_FS);
-    g_terrProg  = linkProg(TERR_VS,  WORLD_FS);   // terrain uses same FS
+    g_terrProg  = linkProg(TERR_VS,  WORLD_FS);
     g_skyProg   = linkProg(SKY_VS,   SKY_FS);
     g_cloudProg = linkProg(CLOUD_VS, CLOUD_FS);
 
-    // Model VAOs
     g_vaoTorso   = makeVAO6(M_TORSO,   N_TORSO);
     g_vaoHead    = makeVAO6(M_HEAD,    N_HEAD);
     g_vaoUpLimb  = makeVAO6(M_UP_LIMB, N_UP_LIMB);
@@ -689,10 +694,8 @@ Java_com_game_procedural_MainActivity_onCreated(JNIEnv*,jobject){
     g_vaoTree    = makeVAO6(M_TREE,    N_TREE);
     g_vaoRock    = makeVAO6(M_ROCK,    N_ROCK);
 
-    // Sky dome
     buildSkyDome();
 
-    // Cloud billboard quad
     glGenVertexArrays(1,&g_cloudVAO);
     GLuint cvbo; glGenBuffers(1,&cvbo);
     glBindVertexArray(g_cloudVAO);
@@ -705,10 +708,9 @@ Java_com_game_procedural_MainActivity_onCreated(JNIEnv*,jobject){
     glEnable(GL_CULL_FACE);  glCullFace(GL_BACK);
     glEnable(GL_BLEND);      glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 
-    // Initial terrain + clouds at origin
     streamChunks(0,0);
     seedClouds(0,0);
-    LOGI("Engine v3 initialised.");
+    LOGI("Engine v3.1 initialised.");
 }
 
 JNIEXPORT void JNICALL
@@ -734,7 +736,6 @@ Java_com_game_procedural_MainActivity_onDraw(
     float fogNear,fogFar;
     getSunMoon(g_dayFrac,sunDir,sunCol,moonDir,ambSky,ambGnd,fogCol,fogNear,fogFar);
 
-    // Clear to current sky horizon colour
     glClearColor(fogCol.x,fogCol.y,fogCol.z,1.f);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
@@ -747,20 +748,17 @@ Java_com_game_procedural_MainActivity_onDraw(
         g_facing=atan2f(-dx,dz);
         g_walkT+=0.18f;
     }
-    // Jump + terrain grounding
     g_jumpY+=g_jumpVY; g_jumpVY-=0.022f;
     float gh=terrH(g_px,g_pz);
     if(g_jumpY<gh){g_jumpY=gh;g_jumpVY=0.f;}
     g_py=g_jumpY;
 
-    // Animation timers
     if(g_slashT>0)g_slashT-=0.055f;
     if(g_bashT >0)g_bashT -=0.085f;
 
     // ── Stream terrain ───────────────────────────────────────
     streamChunks(g_px,g_pz);
 
-    // Drift clouds slowly
     g_cloudOffX+=0.008f;
     if(g_clouds.empty()) seedClouds(g_px,g_pz);
 
@@ -769,7 +767,6 @@ Java_com_game_procedural_MainActivity_onDraw(
     float eyeX=g_px-sinf(yaw)*cosf(pitch)*safeZ;
     float eyeZ=g_pz-cosf(yaw)*cosf(pitch)*safeZ;
     float eyeY=g_py+sinf(pitch)*safeZ+1.5f;
-    // Keep eye above terrain
     float eyeGH=terrH(eyeX,eyeZ)+0.5f;
     if(eyeY<eyeGH) eyeY=eyeGH;
     V3 eye={eyeX,eyeY,eyeZ};
@@ -777,7 +774,6 @@ Java_com_game_procedural_MainActivity_onDraw(
     M4 view=m4look(eye,target,{0,1,0});
     M4 vp=m4mul(g_proj,view);
 
-    // Camera right/up for billboards
     V3 camRight={view.m[0],view.m[4],view.m[8]};
     V3 camUp   ={view.m[1],view.m[5],view.m[9]};
 
@@ -785,7 +781,6 @@ Java_com_game_procedural_MainActivity_onDraw(
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
     glUseProgram(g_skyProg);
-    // Remove translation from view for sky (only rotation)
     M4 skyView=view;
     skyView.m[12]=0;skyView.m[13]=0;skyView.m[14]=0;
     M4 skyVP=m4mul(g_proj,skyView);
@@ -793,6 +788,8 @@ Java_com_game_procedural_MainActivity_onDraw(
     glUniform3f(glGetUniformLocation(g_skyProg,"uSunDir"), sunDir.x,sunDir.y,sunDir.z);
     glUniform3f(glGetUniformLocation(g_skyProg,"uMoonDir"),moonDir.x,moonDir.y,moonDir.z);
     glUniform1f(glGetUniformLocation(g_skyProg,"uDayFrac"),g_dayFrac);
+    // FIX: pass fogCol so sky horizon matches terrain fog exactly
+    glUniform3f(glGetUniformLocation(g_skyProg,"uFogColor"),fogCol.x,fogCol.y,fogCol.z);
     glBindVertexArray(g_skyVAO);
     glDrawElements(GL_TRIANGLES,g_skyIdxCount,GL_UNSIGNED_INT,nullptr);
     glDepthMask(GL_TRUE);
@@ -802,14 +799,14 @@ Java_com_game_procedural_MainActivity_onDraw(
     glUseProgram(g_terrProg);
     GLint tMVP=glGetUniformLocation(g_terrProg,"uMVP");
     GLint tMdl=glGetUniformLocation(g_terrProg,"uModel");
-    glUniform3f(glGetUniformLocation(g_terrProg,"uSunDir"),   sunDir.x,sunDir.y,sunDir.z);
-    glUniform3f(glGetUniformLocation(g_terrProg,"uSunColor"), sunCol.x,sunCol.y,sunCol.z);
+    glUniform3f(glGetUniformLocation(g_terrProg,"uSunDir"),    sunDir.x,sunDir.y,sunDir.z);
+    glUniform3f(glGetUniformLocation(g_terrProg,"uSunColor"),  sunCol.x,sunCol.y,sunCol.z);
     glUniform3f(glGetUniformLocation(g_terrProg,"uAmbientSky"),ambSky.x,ambSky.y,ambSky.z);
     glUniform3f(glGetUniformLocation(g_terrProg,"uAmbientGnd"),ambGnd.x,ambGnd.y,ambGnd.z);
-    glUniform3f(glGetUniformLocation(g_terrProg,"uCamPos"),   eye.x,eye.y,eye.z);
-    glUniform1f(glGetUniformLocation(g_terrProg,"uFogNear"),  fogNear);
-    glUniform1f(glGetUniformLocation(g_terrProg,"uFogFar"),   fogFar);
-    glUniform3f(glGetUniformLocation(g_terrProg,"uFogColor"), fogCol.x,fogCol.y,fogCol.z);
+    glUniform3f(glGetUniformLocation(g_terrProg,"uCamPos"),    eye.x,eye.y,eye.z);
+    glUniform1f(glGetUniformLocation(g_terrProg,"uFogNear"),   fogNear);
+    glUniform1f(glGetUniformLocation(g_terrProg,"uFogFar"),    fogFar);
+    glUniform3f(glGetUniformLocation(g_terrProg,"uFogColor"),  fogCol.x,fogCol.y,fogCol.z);
     M4 identity=m4id();
     glUniformMatrix4fv(tMdl,1,GL_FALSE,identity.m);
     for(auto& ch:g_chunks){
@@ -823,27 +820,27 @@ Java_com_game_procedural_MainActivity_onDraw(
     glUseProgram(g_worldProg);
     uMVP=glGetUniformLocation(g_worldProg,"uMVP");
     uMdl=glGetUniformLocation(g_worldProg,"uModel");
-    glUniform3f(glGetUniformLocation(g_worldProg,"uSunDir"),   sunDir.x,sunDir.y,sunDir.z);
-    glUniform3f(glGetUniformLocation(g_worldProg,"uSunColor"), sunCol.x,sunCol.y,sunCol.z);
+    glUniform3f(glGetUniformLocation(g_worldProg,"uSunDir"),    sunDir.x,sunDir.y,sunDir.z);
+    glUniform3f(glGetUniformLocation(g_worldProg,"uSunColor"),  sunCol.x,sunCol.y,sunCol.z);
     glUniform3f(glGetUniformLocation(g_worldProg,"uAmbientSky"),ambSky.x,ambSky.y,ambSky.z);
     glUniform3f(glGetUniformLocation(g_worldProg,"uAmbientGnd"),ambGnd.x,ambGnd.y,ambGnd.z);
-    glUniform3f(glGetUniformLocation(g_worldProg,"uCamPos"),   eye.x,eye.y,eye.z);
-    glUniform1f(glGetUniformLocation(g_worldProg,"uFogNear"),  fogNear);
-    glUniform1f(glGetUniformLocation(g_worldProg,"uFogFar"),   fogFar);
-    glUniform3f(glGetUniformLocation(g_worldProg,"uFogColor"), fogCol.x,fogCol.y,fogCol.z);
+    glUniform3f(glGetUniformLocation(g_worldProg,"uCamPos"),    eye.x,eye.y,eye.z);
+    glUniform1f(glGetUniformLocation(g_worldProg,"uFogNear"),   fogNear);
+    glUniform1f(glGetUniformLocation(g_worldProg,"uFogFar"),    fogFar);
+    glUniform3f(glGetUniformLocation(g_worldProg,"uFogColor"),  fogCol.x,fogCol.y,fogCol.z);
 
     // Trees — on terrain surface, hash-filtered
     int pcx=(int)floorf(g_px/8.f), pcz=(int)floorf(g_pz/8.f);
     for(int dz=-7;dz<=7;dz++) for(int dx=-7;dx<=7;dx++){
         float tx=(pcx+dx)*8.f, tz=(pcz+dz)*8.f;
         float h1=hash(tx*.031f,tz*.047f);
-        if(h1<0.52f) continue;                        // ~48% cells have trees
+        if(h1<0.52f) continue;
         float ty=terrH(tx,tz);
-        if(ty>7.5f) continue;                         // no trees on high peaks
+        if(ty>7.5f) continue;
         V3 tn=terrNormal(tx,tz);
-        if(tn.y<0.72f) continue;                      // no trees on steep slopes
+        if(tn.y<0.72f) continue;
         float rot=hash(tx*.13f,tz*.19f)*6.2832f;
-        float scl=0.85f+hash(tx*.07f,tz*.11f)*0.35f; // slight size variation
+        float scl=0.85f+hash(tx*.07f,tz*.11f)*0.35f;
         M4 tm=m4mul(m4mul(m4T(tx,ty,tz),m4RY(rot)),m4S(scl,scl,scl));
         drawVAO(g_vaoTree,N_TREE,tm,vp);
     }
@@ -861,7 +858,7 @@ Java_com_game_procedural_MainActivity_onDraw(
     // ── 4. CHARACTER ─────────────────────────────────────────
     bool move=fabsf(ix)>0.02f||fabsf(iy)>0.02f;
     float bobY=move?sinf(g_walkT*2.f)*0.025f:0.f;
-    float groundOffset=g_py-terrH(g_px,g_pz);   // height above ground
+    float groundOffset=g_py-terrH(g_px,g_pz);
     M4 charBase=m4mul(m4T(g_px,g_py+0.98f+bobY,g_pz),m4RY(g_facing));
     drawCharacter(charBase,vp);
 
