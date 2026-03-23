@@ -58,7 +58,7 @@ cat << 'EOF' > app/src/main/AndroidManifest.xml
 </manifest>
 EOF
 
-# --- Comprehensive UI Layout (Inventory, HUD, Joystick) ---
+# --- Comprehensive UI Layout (XML FIXED) ---
 cat << 'EOF' > app/src/main/res/layout/activity_main.xml
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent" android:layout_height="match_parent">
@@ -96,7 +96,7 @@ cat << 'EOF' > app/src/main/res/layout/activity_main.xml
             <Button android:id="@+id/btn_close_menu" android:layout_width="100dp" android:layout_height="80dp" android:text="Resume" android:textColor="#FF4444"/>
         </LinearLayout>
         <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="match_parent" android:orientation="vertical">
-            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="INVENTORY & LOADOUT" android:textColor="#FFF" android:textSize="24sp" android:textStyle="bold" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="INVENTORY &amp; LOADOUT" android:textColor="#FFF" android:textSize="24sp" android:textStyle="bold" />
             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Manage your high-resolution assets here." android:textColor="#CCC" android:textSize="16sp" android:layout_marginTop="10dp"/>
         </LinearLayout>
     </LinearLayout>
