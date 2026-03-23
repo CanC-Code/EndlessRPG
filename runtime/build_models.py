@@ -1,10 +1,10 @@
 # File: runtime/build_models.py
-# Master Blender bake script for EndlessRPG.
+# Master Blender bake script for EndlessRPG v4.
 # Imports each modular model from runtime/models/ and runtime/models/equipment/,
-# bakes them with per-vertex lighting + AO, and writes AllModels.h.
+# bakes them with per-vertex Lambertian shading + vertical AO, writes AllModels.h.
 #
 # Run via: blender --background -noaudio --python runtime/build_models.py
-# (Blender sets CWD to the project root)
+# Blender sets CWD to project root.
 
 import sys, os
 sys.path.insert(0, os.path.abspath("runtime"))
@@ -12,13 +12,12 @@ sys.path.insert(0, os.path.abspath("runtime"))
 import bpy
 import bmesh
 
-# Modular model builders
-from models.character          import (build_torso, build_head,
-                                       build_upper_limb, build_lower_limb,
-                                       build_foot, build_rock)
-from models.tree               import build_tree
-from models.equipment.sword    import build_sword
-from models.equipment.shield   import build_shield
+from models.character import (build_torso, build_neck, build_head,
+                               build_upper_limb, build_lower_limb,
+                               build_hand, build_foot, build_rock)
+from models.tree              import build_tree
+from models.equipment.sword   import build_sword
+from models.equipment.shield  import build_shield
 
 OUTPUT_PATH = "app/src/main/cpp/models/AllModels.h"
 
@@ -29,10 +28,10 @@ OUTPUT_PATH = "app/src/main/cpp/models/AllModels.h"
 def export_model(name: str, r: float, g: float, b: float,
                  build_func, out_handle, seed=None):
     """
-    Calls build_func() (which sets up the scene), triangulates,
-    bakes per-vertex colour with diffuse shading + AO, then writes
-    the C array to out_handle.
-    Coordinate system: Blender Z-up → OpenGL Y-up.
+    Calls build_func(), triangulates, bakes per-vertex colour
+    with Lambertian shading + vertical AO, writes C array.
+    Coordinate remap: Blender Z-up → OpenGL Y-up:
+        GL(x, y, z) = Blender(x, z, -y)
     """
     if seed is not None:
         import random; random.seed(seed)
@@ -43,7 +42,6 @@ def export_model(name: str, r: float, g: float, b: float,
     if obj is None or obj.type != 'MESH':
         print(f"  SKIP {name}: no active mesh"); return
 
-    # Apply all modifiers
     bpy.ops.object.convert(target='MESH')
 
     mesh = obj.data
@@ -59,27 +57,30 @@ def export_model(name: str, r: float, g: float, b: float,
     min_z  = min(zs) if zs else 0.0
     height = (max(zs) - min_z) if zs else 1.0
 
-    # Sun direction (normalised): right-overhead, slight forward tilt
+    # Mid-morning sun direction (normalised), matches engine start dayFrac≈0.45
     SX, SY, SZ = 0.2357, 0.9428, 0.2357
 
     verts = []
     for tri in mesh.loop_triangles:
         for li in tri.loops:
             v  = mesh.vertices[mesh.loops[li].vertex_index]
-            sn = mesh.loops[li].normal   # smooth normal
+            sn = mesh.loops[li].normal
 
-            # Diffuse (Lambertian) — coordinate-converted normal
-            nx, ny, nz = sn.x, sn.z, -sn.y  # Blender→GL
-            diff = max(nx * SX + ny * SY + nz * SZ, 0.0)
-            shade = 0.33 + 0.67 * diff
+            # Blender→GL normal remap
+            nx, ny, nz = sn.x, sn.z, -sn.y
+            diff  = max(nx * SX + ny * SY + nz * SZ, 0.0)
+            shade = 0.30 + 0.70 * diff    # slightly deeper shadow range
 
-            # Vertical AO: bottom of each object is darkened
-            ao = 0.52 + 0.48 * ((v.co.z - min_z) / height) if height > 0.001 else 1.0
+            # Vertical AO: darken underside
+            ao = 0.50 + 0.50 * ((v.co.z - min_z) / height) if height > 0.001 else 1.0
 
-            factor = shade * ao
+            # Micro surface variation: subtle noise per vertex
+            noise = 1.0 + (((v.co.x * 127.1 + v.co.y * 311.7) % 1.0) - 0.5) * 0.04
+
+            factor = shade * ao * noise
 
             # Blender Z-up → OpenGL Y-up
-            verts += [v.co.x, v.co.z, -v.co.y,
+            verts += [v.co.x,  v.co.z, -v.co.y,
                       r * factor, g * factor, b * factor]
 
     count = len(verts) // 6
@@ -90,22 +91,23 @@ def export_model(name: str, r: float, g: float, b: float,
 
 
 # ─────────────────────────────────────────────────────────────
-#  Model registry
+#  Model registry  (name, R, G, B, builder)
 # ─────────────────────────────────────────────────────────────
-# (name, R, G, B, builder_func)
 MODELS = [
-    # Character
-    ("TORSO",    0.28, 0.32, 0.38,  build_torso),          # slate armour
-    ("HEAD",     0.82, 0.65, 0.50,  build_head),           # skin
-    ("UP_LIMB",  0.28, 0.32, 0.38,  build_upper_limb),     # slate armour
-    ("LOW_LIMB", 0.28, 0.32, 0.38,  build_lower_limb),
-    ("FOOT",     0.18, 0.15, 0.12,  build_foot),           # dark leather boot
+    # ── Character body parts ──────────────────────────────────
+    ("TORSO",    0.28, 0.32, 0.38,  build_torso),      # slate armour
+    ("NECK",     0.80, 0.64, 0.50,  build_neck),       # skin
+    ("HEAD",     0.82, 0.65, 0.50,  build_head),       # skin
+    ("UP_LIMB",  0.28, 0.32, 0.38,  build_upper_limb), # armour
+    ("LOW_LIMB", 0.28, 0.32, 0.38,  build_lower_limb), # armour
+    ("HAND",     0.24, 0.22, 0.20,  build_hand),       # dark gauntlet
+    ("FOOT",     0.18, 0.15, 0.12,  build_foot),       # dark leather boot
 
-    # Equipment
-    ("SWORD",    0.72, 0.74, 0.78,  build_sword),          # polished steel
-    ("SHIELD",   0.40, 0.27, 0.14,  build_shield),         # oak wood
+    # ── Equipment ─────────────────────────────────────────────
+    ("SWORD",    0.72, 0.74, 0.78,  build_sword),      # polished steel
+    ("SHIELD",   0.40, 0.27, 0.14,  build_shield),     # oak wood
 
-    # Environment
+    # ── Environment ───────────────────────────────────────────
     ("TREE",     0.15, 0.42, 0.12,  lambda: build_tree(42)),
     ("ROCK",     0.46, 0.44, 0.42,  build_rock),
 ]
@@ -116,9 +118,9 @@ MODELS = [
 # ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    print(f"\nEndlessRPG — Baking {len(MODELS)} models → {OUTPUT_PATH}")
+    print(f"\nEndlessRPG v4 — Baking {len(MODELS)} models → {OUTPUT_PATH}")
     with open(OUTPUT_PATH, "w") as fh:
-        fh.write("// Auto-generated by runtime/build_models.py — DO NOT EDIT\n")
+        fh.write("// Auto-generated by runtime/build_models.py v4 — DO NOT EDIT\n")
         fh.write("#pragma once\n\n")
         for name, r, g, b, func in MODELS:
             export_model(name, r, g, b, func, fh)
