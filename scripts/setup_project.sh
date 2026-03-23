@@ -473,3 +473,4 @@ public class MainActivity extends Activity implements GLSurfaceView.Renderer {
 EOF
 
 echo "[setup_project.sh] Done."
+
