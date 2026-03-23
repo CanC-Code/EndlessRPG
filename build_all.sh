@@ -1,10 +1,10 @@
 #!/bin/bash
 # File: build_all.sh
-# EndlessRPG Unified Build Pipeline
+# EndlessRPG Unified Build Pipeline v3
 
 set -e
 echo "=========================================="
-echo " EndlessRPG Build Pipeline"
+echo " EndlessRPG Build Pipeline v3"
 echo "=========================================="
 
 # 1. Clean and Prepare Directories
@@ -16,6 +16,7 @@ mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/res/layout
 mkdir -p app/src/main/res/values
 mkdir -p app/src/main/res/drawable
+mkdir -p runtime/models/equipment
 mkdir -p runtime/python
 mkdir -p scripts
 
@@ -27,26 +28,24 @@ chmod +x runtime/generate_shaders.sh
 chmod +x runtime/generate_game.sh
 chmod +x runtime/infill_game.sh
 
-# 3. Scaffold Android Architecture
-echo "[1/5] Generating Android and Gradle Configurations..."
+# 3. Scaffold Android Architecture (Gradle, Manifest, Layout, Java)
+echo "[1/4] Generating Android configurations..."
 ./scripts/setup_project.sh
 
-# 4. Generate 3D Models via Blender
-echo "[2/5] Baking Realistic Character Models..."
+# 4. Bake all 3D models via Blender (modular model scripts)
+echo "[2/4] Baking 3D models via Blender..."
 blender --background -noaudio --python runtime/build_models.py
 
-echo "[3/5] Baking Realistic Environmental Assets..."
-blender --background -noaudio --python runtime/python/generate_realistic_assets.py
-
-# 5. Generate shaders
-echo "[4/5] Generating Photorealistic GLSL Shaders..."
+# 5. Generate reference shaders (also embedded in engine)
+echo "[3/4] Generating GLSL shaders..."
 ./runtime/generate_shaders.sh
 
-# 6. Generate C++ Engine
-echo "[5/5] Compiling C++ Procedural Engine..."
+# 6. Generate C++ engine
+echo "[4/4] Generating C++ engine..."
 ./runtime/generate_engine.sh
 
 echo ""
 echo "=========================================="
-echo " Build environment prepared. Run Gradle."
+echo " Build environment prepared."
+echo " Run: ./gradlew assembleDebug"
 echo "=========================================="
