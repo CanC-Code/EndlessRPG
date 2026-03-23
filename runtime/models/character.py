@@ -1,219 +1,173 @@
 # File: runtime/models/character.py
-# Modular character body part builders for EndlessRPG v4.
+# EndlessRPG v5 — Knight character with proper proportions.
+# Knight proportions: wide armoured torso, broad shoulders, thick limbs,
+# visored helmet, sabatons (armoured boots).
 #
-# Anatomy fixes:
-#   - All limbs built with origin at the PROXIMAL joint (shoulder/hip)
-#     so the hierarchy chain attaches correctly with no floating gaps.
-#   - Limb cylinders are centred at -depth/2 on Z so joint pivot is at Z=0
-#     and the distal end is at Z=-depth (ready for child attachment).
-#   - Torso: proper chest width, waist taper, shoulder shelf.
-#   - Head: correct skull shape with brow ridge, placed at neck top.
-#   - Neck: short cylinder connecting torso to head.
-#   - Hand: distinct from foot — flattened palm + short finger stub array.
-#   - Foot/boot: longer forward extension, separate from hand.
-#   - Upper limb tapers from shoulder radius to elbow radius.
-#   - Lower limb tapers from elbow radius to wrist radius.
-#   - Rock builder kept here to avoid breaking build_models.py import.
+# Joint chain (all origins at proximal joint):
+#   Torso   : origin at hip bottom, top at Z=+0.76
+#   Neck    : origin at Z=0.76 (torso top)
+#   Head    : origin at Z=0.94 (chin)
+#   Shoulder: X=±0.36, Z=0.70
+#   Limb    : extends -Z from origin, tip at Z=-length
+#   Wrist   : at Z=-0.40 from elbow
+#   Ankle   : at Z=-0.40 from knee
 
-import bpy
-import bmesh
-import math
+import bpy, bmesh, math
 
 
 def _clear():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
 
-
-def _apply_subsurf(obj, levels=1):
-    sub = obj.modifiers.new("Sub", 'SUBSURF')
-    sub.levels = levels
-    sub.render_levels = levels
-
-
-def _apply_all(obj):
+def _apply(obj):
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
+def _sub(obj, levels=1):
+    s = obj.modifiers.new("Sub", 'SUBSURF')
+    s.levels = s.render_levels = levels
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  TORSO
-#  Origin: at hip centre (bottom of torso).
-#  Chest top at Z=+0.74, hip bottom at Z=0.
-#  Shoulder attachment points: X=±0.34, Z=0.68
-#  Neck attachment: X=0, Z=0.74
-#  Hip/leg attachment: X=±0.18, Z=0
-# ─────────────────────────────────────────────────────────────────────────────
+def clamp01(v): return max(0.0, min(1.0, v))
+
+
+# ── TORSO ────────────────────────────────────────────────────────
+# Origin: hip bottom. Height: 0.76. Broad armoured plate.
 def build_torso():
-    """Armoured torso with chest/waist taper. Origin at hip bottom."""
     _clear()
-
-    # Build in edit mode for waist taper
-    bpy.ops.mesh.primitive_cylinder_add(vertices=20, radius=0.30, depth=0.74,
-                                        location=(0, 0, 0.37))
+    bpy.ops.mesh.primitive_cylinder_add(vertices=20, radius=0.32, depth=0.76,
+                                         location=(0, 0, 0.38))
     obj = bpy.context.object
-    # Front-to-back flatten (armour plate look)
-    obj.scale = (1.0, 0.70, 1.0)
-    _apply_all(obj)
-
-    # Waist taper: narrow middle verts
+    obj.scale = (1.0, 0.68, 1.0)   # front-back flatten
+    _apply(obj)
+    # Waist taper
     bpy.ops.object.mode_set(mode='EDIT')
     bm = bmesh.from_edit_mesh(obj.data)
     bm.verts.ensure_lookup_table()
     for v in bm.verts:
-        # waist region: Z between 0.18 and 0.42
-        if 0.18 < v.co.z < 0.42:
-            t = 1.0 - abs(v.co.z - 0.30) / 0.12   # 0 at edges, 1 at Z=0.30
-            taper = 1.0 - t * 0.18
-            v.co.x *= taper
-            v.co.y *= taper
+        if 0.20 < v.co.z < 0.46:
+            t = 1.0 - abs(v.co.z - 0.33) / 0.13
+            v.co.x *= (1.0 - t * 0.16)
+            v.co.y *= (1.0 - t * 0.16)
     bmesh.update_edit_mesh(obj.data)
     bpy.ops.object.mode_set(mode='OBJECT')
-
-    # Shoulder shelf — widen chest top
+    # Shoulder shelf
     for v in obj.data.vertices:
-        if v.co.z > 0.56:
-            shelf = (v.co.z - 0.56) / 0.18
-            v.co.x *= (1.0 + shelf * 0.20)
+        if v.co.z > 0.58:
+            sh = (v.co.z - 0.58) / 0.18
+            v.co.x *= (1.0 + sh * 0.24)
+    # Armour plate ridge on chest front
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.23, 0.52))
+    plate = bpy.context.object
+    plate.scale = (0.22, 0.010, 0.18)
+    _apply(plate)
+    _sub(plate, 1)
+    # Pauldron hints (shoulder caps)
+    for sx in [-0.36, 0.36]:
+        bpy.ops.mesh.primitive_uv_sphere_add(segments=8, ring_count=6,
+                                              radius=0.095, location=(sx, 0, 0.72))
+        p = bpy.context.object; p.scale=(1,0.7,0.7); _apply(p)
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.context.view_layer.objects.active=bpy.context.selected_objects[0]
+    bpy.ops.object.join()
+    _sub(bpy.context.active_object, 1)
+    return bpy.context.active_object
 
-    _apply_subsurf(obj, 2)
-    return obj
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  NECK
-#  Short cylinder. Origin at base (connects to torso top Z=0.74).
-#  Top at Z=+0.18.
-# ─────────────────────────────────────────────────────────────────────────────
+# ── NECK ────────────────────────────────────────────────────────
 def build_neck():
-    """Short neck cylinder. Origin at base."""
     _clear()
-    bpy.ops.mesh.primitive_cylinder_add(vertices=10, radius=0.085, depth=0.18,
-                                        location=(0, 0, 0.09))
+    bpy.ops.mesh.primitive_cylinder_add(vertices=10, radius=0.088, depth=0.18,
+                                         location=(0, 0, 0.09))
     obj = bpy.context.object
-    obj.scale = (1.0, 0.80, 1.0)
-    _apply_all(obj)
-    _apply_subsurf(obj, 1)
+    obj.scale = (1.0, 0.82, 1.0)
+    _apply(obj)
+    _sub(obj, 1)
     return obj
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  HEAD
-#  Skull with slight brow and cheekbone shape. Origin at neck attachment
-#  point (bottom of head, i.e., chin level).
-# ─────────────────────────────────────────────────────────────────────────────
+# ── HEAD (Visored Knight Helmet) ─────────────────────────────────
+# Origin at chin. Skull at Z=0..0.46, visor/nasal extends forward.
 def build_head():
-    """Realistic skull shape. Origin at base (chin/neck joint)."""
     _clear()
-    # UV sphere: origin will be at centre; we shift so base is at Z=0
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=20, ring_count=14,
-                                          radius=0.22, location=(0, 0, 0.22))
-    obj = bpy.context.object
-    # Slightly elongated vertically, narrower front-to-back
-    obj.scale = (1.00, 0.84, 1.15)
-    _apply_all(obj)
+    # Helmet skull
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=18, ring_count=12,
+                                          radius=0.24, location=(0, 0, 0.24))
+    skull = bpy.context.object
+    skull.scale = (1.02, 0.88, 1.12)
+    _apply(skull)
+    _sub(skull, 2)
+    # Cheek guards — flat side plates
+    for sx in [-0.20, 0.20]:
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(sx, -0.06, 0.14))
+        cg = bpy.context.object; cg.scale = (0.048, 0.035, 0.14); _apply(cg); _sub(cg, 1)
+    # Nasal bar / visor slit
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.25, 0.28))
+    nasal = bpy.context.object; nasal.scale = (0.035, 0.020, 0.10); _apply(nasal)
+    # Visor brim
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.22, 0.24))
+    brim = bpy.context.object; brim.scale = (0.22, 0.012, 0.018); _apply(brim)
+    # Aventail (chain-coif hint at base)
+    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.19, depth=0.06,
+                                         location=(0, 0, 0.04))
+    av = bpy.context.object; av.scale = (1, 0.90, 1); _apply(av); _sub(av, 1)
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
+    bpy.ops.object.join()
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    return bpy.context.active_object
 
-    # Brow ridge: push forward-upper verts
-    for v in obj.data.vertices:
-        if v.co.z > 0.26 and v.co.y < -0.05:   # front upper
-            brow_t = min(1.0, (v.co.z - 0.26) / 0.10)
-            v.co.y -= brow_t * 0.018
 
-    # Jaw: widen lower face slightly
-    for v in obj.data.vertices:
-        if 0.04 < v.co.z < 0.18:
-            jaw_t = 1.0 - abs(v.co.z - 0.11) / 0.07
-            v.co.x *= (1.0 + jaw_t * 0.08)
-
-    _apply_subsurf(obj, 2)
-    return obj
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  UPPER LIMB (upper arm / thigh)
-#  Origin at shoulder/hip pivot (Z=0). Limb extends downward to Z=-0.40.
-#  Tapered: wider at origin, narrower at tip.
-# ─────────────────────────────────────────────────────────────────────────────
+# ── UPPER LIMB (upper arm / thigh) ─────────────────────────────
+# Origin at proximal joint (Z=0). Extends to Z=-0.42.
 def build_upper_limb():
-    """Upper arm or thigh. Origin at proximal joint (shoulder/hip). Tip at Z=-0.40."""
     _clear()
-    depth = 0.40
-    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.095,
-                                        depth=depth,
-                                        location=(0, 0, -depth / 2))
-    obj = bpy.context.object
-    _apply_all(obj)
-
-    # Taper to 75% radius at distal end
-    for v in obj.data.vertices:
-        t = clamp01((-v.co.z) / depth)   # 0 at proximal, 1 at distal
-        taper = 1.0 - t * 0.25
-        v.co.x *= taper
-        v.co.y *= taper
-
-    _apply_subsurf(obj, 1)
-    return obj
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  LOWER LIMB (forearm / shin)
-#  Origin at elbow/knee pivot (Z=0). Tip at Z=-0.38.
-# ─────────────────────────────────────────────────────────────────────────────
-def build_lower_limb():
-    """Forearm or shin. Origin at proximal joint (elbow/knee). Tip at Z=-0.38."""
-    _clear()
-    depth = 0.38
-    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.078,
-                                        depth=depth,
-                                        location=(0, 0, -depth / 2))
-    obj = bpy.context.object
-    _apply_all(obj)
-
-    # Slight taper toward wrist/ankle
+    depth = 0.42
+    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.100,
+                                         depth=depth, location=(0, 0, -depth/2))
+    obj = bpy.context.object; _apply(obj)
     for v in obj.data.vertices:
         t = clamp01((-v.co.z) / depth)
-        taper = 1.0 - t * 0.20
-        v.co.x *= taper
-        v.co.y *= taper
-
-    _apply_subsurf(obj, 1)
+        v.co.x *= (1.0 - t * 0.22)
+        v.co.y *= (1.0 - t * 0.22)
+    _sub(obj, 1)
     return obj
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  HAND
-#  Distinct from foot. Flattened palm block + four short finger stubs.
-#  Origin at wrist (top, Z=0). Palm base at Z=-0.10.
-# ─────────────────────────────────────────────────────────────────────────────
+# ── LOWER LIMB (forearm / shin) ────────────────────────────────
+# Origin at joint (Z=0). Extends to Z=-0.40.
+def build_lower_limb():
+    _clear()
+    depth = 0.40
+    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=0.082,
+                                         depth=depth, location=(0, 0, -depth/2))
+    obj = bpy.context.object; _apply(obj)
+    for v in obj.data.vertices:
+        t = clamp01((-v.co.z) / depth)
+        v.co.x *= (1.0 - t * 0.18)
+        v.co.y *= (1.0 - t * 0.18)
+    _sub(obj, 1)
+    return obj
+
+
+# ── HAND (Gauntlet) ──────────────────────────────────────────────
+# Origin at wrist (Z=0). Gauntlet cuff + knuckle plates.
 def build_hand():
-    """Armoured gauntlet hand. Origin at wrist. Palm extends Z=-0.10."""
     _clear()
-
-    # Palm block
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, -0.055))
-    palm = bpy.context.object
-    palm.scale = (0.105, 0.048, 0.065)
-    _apply_all(palm)
-    _apply_subsurf(palm, 1)
-
-    # Four finger stubs
-    finger_xs = [-0.038, -0.013, 0.013, 0.038]
-    for fx in finger_xs:
-        bpy.ops.mesh.primitive_cylinder_add(vertices=6, radius=0.012,
-                                             depth=0.048,
-                                             location=(fx, -0.010, -0.136))
-        f = bpy.context.object
-        _apply_all(f)
-
-    # Thumb stub
-    bpy.ops.mesh.primitive_cylinder_add(vertices=6, radius=0.014,
-                                         depth=0.040,
-                                         location=(0.060, 0, -0.080))
-    thumb = bpy.context.object
-    thumb.rotation_euler = (0, math.radians(40), 0)
-    _apply_all(thumb)
-
-    # Join
+    # Cuff
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, -0.048))
+    cuff = bpy.context.object; cuff.scale = (0.10, 0.046, 0.058); _apply(cuff); _sub(cuff, 1)
+    # Knuckle plate
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.014, -0.105))
+    knuck = bpy.context.object; knuck.scale = (0.092, 0.018, 0.038); _apply(knuck)
+    # Four finger segments
+    for fx in [-0.033, -0.011, 0.011, 0.033]:
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(fx, -0.014, -0.140))
+        fg = bpy.context.object; fg.scale = (0.018, 0.014, 0.030); _apply(fg)
+    # Thumb
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0.058, -0.006, -0.076))
+    th = bpy.context.object; th.scale = (0.020, 0.014, 0.028)
+    th.rotation_euler = (0, math.radians(28), 0)
+    _apply(th)
     bpy.ops.object.select_all(action='SELECT')
     bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
     bpy.ops.object.join()
@@ -221,35 +175,27 @@ def build_hand():
     return bpy.context.active_object
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  FOOT / BOOT
-#  Distinct from hand. Long forward extension.
-#  Origin at ankle (top, Z=0). Sole at Z=-0.085, toe extends forward in Y.
-# ─────────────────────────────────────────────────────────────────────────────
+# ── FOOT (Sabaton — armoured boot) ──────────────────────────────
+# Origin at ankle (Z=0). Sole at Z=-0.08, toe extends in -Y.
 def build_foot():
-    """Leather boot. Origin at ankle. Toe extends in -Y (Blender forward)."""
     _clear()
-
-    # Ankle block
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.030, -0.042))
-    ankle = bpy.context.object
-    ankle.scale = (0.095, 0.072, 0.048)
-    _apply_all(ankle)
-    _apply_subsurf(ankle, 1)
-
-    # Toe extension (longer in Y)
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.110, -0.060))
-    toe = bpy.context.object
-    toe.scale = (0.085, 0.068, 0.036)
-    _apply_all(toe)
-    _apply_subsurf(toe, 1)
-
-    # Heel nub
-    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0.042, -0.060))
-    heel = bpy.context.object
-    heel.scale = (0.072, 0.035, 0.032)
-    _apply_all(heel)
-
+    # Ankle guard
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.028, -0.040))
+    ank = bpy.context.object; ank.scale = (0.098, 0.070, 0.050); _apply(ank); _sub(ank, 1)
+    # Foot plate
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, -0.095, -0.062))
+    fp = bpy.context.object; fp.scale = (0.090, 0.068, 0.034); _apply(fp); _sub(fp, 1)
+    # Toe cap (rounded)
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=8, ring_count=6,
+                                          radius=0.038, location=(0, -0.152, -0.060))
+    tc = bpy.context.object; tc.scale = (1, 0.8, 0.55); _apply(tc)
+    # Heel
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0.040, -0.060))
+    hl = bpy.context.object; hl.scale = (0.075, 0.036, 0.030); _apply(hl)
+    # Plate ridges
+    for py in [-0.048, -0.085, -0.118]:
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(0, py, -0.050))
+        rg = bpy.context.object; rg.scale = (0.092, 0.008, 0.012); _apply(rg)
     bpy.ops.object.select_all(action='SELECT')
     bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
     bpy.ops.object.join()
@@ -257,32 +203,19 @@ def build_foot():
     return bpy.context.active_object
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  ROCK
-# ─────────────────────────────────────────────────────────────────────────────
+# ── ROCK ────────────────────────────────────────────────────────
 def build_rock():
-    """Weathered field rock — perturbed icosphere."""
-    import random
-    random.seed(7)
+    import random; random.seed(7)
     _clear()
-    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=0.45,
-                                           location=(0, 0, 0))
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=3, radius=0.45, location=(0,0,0))
     obj = bpy.context.object
-    obj.scale = (random.uniform(0.9, 1.3),
-                 random.uniform(0.7, 1.1),
-                 random.uniform(0.38, 0.58))
-    _apply_all(obj)
+    obj.scale = (random.uniform(0.9,1.3),random.uniform(0.7,1.1),random.uniform(0.38,0.58))
+    _apply(obj)
     for v in obj.data.vertices:
-        v.co.x += random.uniform(-0.06, 0.06)
-        v.co.y += random.uniform(-0.06, 0.06)
-        v.co.z += random.uniform(-0.03, 0.03)
-    # Flatten bottom so rock sits on ground
+        v.co.x+=random.uniform(-0.07,0.07)
+        v.co.y+=random.uniform(-0.07,0.07)
+        v.co.z+=random.uniform(-0.03,0.03)
     for v in obj.data.vertices:
-        if v.co.z < -0.10:
-            v.co.z = -0.10
-    _apply_subsurf(obj, 1)
+        if v.co.z<-0.08: v.co.z=-0.08
+    _sub(obj, 1)
     return obj
-
-
-def clamp01(v):
-    return max(0.0, min(1.0, v))
