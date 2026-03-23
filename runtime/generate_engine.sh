@@ -486,6 +486,7 @@ static void streamChunks(float px,float pz){
 //  Sky dome
 // ════════════════════════════════════════════════════════════════
 static GLuint g_skyProg=0, g_skyVAO=0;
+static int g_skyIdxCount=0;
 
 static void buildSkyDome(){
     // Icosphere-style sphere triangulation (UV sphere, 24×12)
@@ -517,7 +518,6 @@ static void buildSkyDome(){
     glBindVertexArray(0);
     g_skyIdxCount=(int)idx.size();
 }
-static int g_skyIdxCount=0;
 
 // ════════════════════════════════════════════════════════════════
 //  Cloud billboard layer
