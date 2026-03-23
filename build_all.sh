@@ -1,25 +1,37 @@
 #!/bin/bash
 # File: build_all.sh
 
-# 1. Prepare asset directories
+echo "Initializing EndlessRPG Build Pipeline..."
+
+# 1. Clean and Prepare Directories
 rm -rf app/src/main/assets/models
 mkdir -p app/src/main/assets/models
+mkdir -p app/src/main/cpp
+mkdir -p app/src/main/java/com/game/procedural
+mkdir -p app/src/main/res/layout
 mkdir -p runtime/python
 mkdir -p scripts
 
-# 2. Run Project Setup (Generates Gradle/Java/XML)
+# 2. Grant Permissions
 chmod +x scripts/setup_project.sh
+chmod +x runtime/generate_engine.sh
+
+# 3. Scaffold Android Architecture
+echo "Generating Android and Gradle Configurations..."
 ./scripts/setup_project.sh
 
-# 3. Generate Realistic Models (Character & Environment)
-# Uses Blender to bake anatomy and nature assets
-blender --background --python runtime/build_models.py
-blender --background --python runtime/python/generate_realistic_assets.py
+# 4. Generate High-Resolution 3D Models via Blender
+# Using -noaudio to suppress ALSA headless driver warnings in GitHub Actions
+echo "Baking Realistic 5-Fingered Player Anatomy..."
+blender --background -noaudio --python runtime/build_models.py
 
-# 4. Generate C++ Engine
-chmod +x runtime/generate_engine.sh
+echo "Baking Realistic Procedural Environmental Assets..."
+blender --background -noaudio --python runtime/python/generate_realistic_assets.py
+
+# 5. Generate C++ Procedural Engine
+echo "Compiling C++ Procedural fBm Engine..."
 ./runtime/generate_engine.sh
 
 echo "--------------------------------------------------------"
-echo "Build environment prepared. You can now run gradlew."
+echo "Build environment perfectly prepared. Proceed with Gradle."
 echo "--------------------------------------------------------"
