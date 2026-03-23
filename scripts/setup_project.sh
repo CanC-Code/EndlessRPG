@@ -1,146 +1,138 @@
 #!/bin/bash
-# File: runtime/generate_engine.sh
-# EndlessRPG v6 - Clean High-Fidelity Native Engine
+# File: scripts/setup_project.sh
+# EndlessRPG Unified Build Pipeline v5 - Android Scaffold with GLM Dependency
+
 set -e
+echo "[setup_project.sh] Scaffolding Android project structure..."
 
-OUT="app/src/main/cpp/native-lib.cpp"
-mkdir -p app/src/main/cpp
-
-cat <<EOF > $OUT
-#include <jni.h>
-#include <GLES3/gl3.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
-#include <vector>
-#include "models/AllModels.h"
-#include "shaders/Shaders.h"
-
-// --- Global Engine State ---
-GLuint worldProgram;
-GLuint vaoHead, vaoTorso, vaoUpLimb, vaoLowLimb, vaoHand, vaoFoot;
-GLuint vaoTree, vaoRock, vaoSword, vaoShield;
-
-GLint uMVP, uModel, uSunDir, uViewPos, uFogColor;
-
-int screenW = 1, screenH = 1;
-float camZoom = 12.0f;
-
-// --- Helper: Create VAO for 9-float Vertex Format (Pos, Col, Norm) ---
-GLuint makeVAO9(const float* data, int vertexCount) {
-    GLuint vao, vbo;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertexCount * 9 * sizeof(float), data, GL_STATIC_DRAW);
-
-    // Attribute 0: Position (3 floats)
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    
-    // Attribute 1: Color (3 floats)
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-    
-    // Attribute 2: Normal (3 floats)
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(6 * sizeof(float)));
-    glEnableVertexAttribArray(2);
-    
-    return vao;
+# 1. Project-level build.gradle
+cat <<EOF > build.gradle
+buildscript {
+    repositories { google(); mavenCentral() }
+    dependencies { classpath 'com.android.tools.build:gradle:8.2.2' }
 }
+allprojects {
+    repositories { google(); mavenCentral() }
+}
+EOF
 
-extern "C" {
-    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onCreated(JNIEnv* env, jclass clz) {
-        // Compile Shaders from generated Shaders.h
-        GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vs, 1, &WORLD_VS, NULL); 
-        glCompileShader(vs);
-        
-        GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fs, 1, &WORLD_FS, NULL); 
-        glCompileShader(fs);
-        
-        worldProgram = glCreateProgram();
-        glAttachShader(worldProgram, vs);
-        glAttachShader(worldProgram, fs);
-        glLinkProgram(worldProgram);
-
-        // Map Uniform Locations
-        uMVP      = glGetUniformLocation(worldProgram, "uMVP");
-        uModel    = glGetUniformLocation(worldProgram, "uModel");
-        uSunDir   = glGetUniformLocation(worldProgram, "uSunDir");
-        uViewPos  = glGetUniformLocation(worldProgram, "uViewPos");
-        uFogColor = glGetUniformLocation(worldProgram, "uFogColor");
-
-        // Initialize VAOs for character and environment
-        vaoHead    = makeVAO9(M_HEAD, N_HEAD);
-        vaoTorso   = makeVAO9(M_TORSO, N_TORSO);
-        vaoUpLimb  = makeVAO9(M_UP_LIMB, N_UP_LIMB);
-        vaoLowLimb = makeVAO9(M_LOW_LIMB, N_LOW_LIMB);
-        vaoHand    = makeVAO9(M_HAND, N_HAND);
-        vaoFoot    = makeVAO9(M_FOOT, N_FOOT);
-        
-        vaoTree    = makeVAO9(M_TREE, N_TREE);
-        vaoRock    = makeVAO9(M_ROCK, N_ROCK);
-        vaoSword   = makeVAO9(M_SWORD, N_SWORD);
-        vaoShield  = makeVAO9(M_SHIELD, N_SHIELD);
-    }
-
-    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onDraw(JNIEnv* env, jclass clz, 
-        jfloat joyX, jfloat joyY, jfloat yaw, jfloat pitch) {
-        
-        // Atmosphere Setup (Sky Color)
-        glClearColor(0.7f, 0.85f, 0.95f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
-        glUseProgram(worldProgram);
-
-        // Camera Transformation
-        glm::vec3 camPos = glm::vec3(
-            camZoom * cos(pitch) * sin(yaw),
-            camZoom * sin(pitch),
-            camZoom * cos(pitch) * cos(yaw)
-        );
-        glm::mat4 view = glm::lookAt(camPos, glm::vec3(0, 1.0f, 0), glm::vec3(0, 1, 0));
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)screenW/screenH, 0.1f, 200.0f);
-        
-        // Set Uniforms
-        glUniform3f(uSunDir, 1.0f, 2.0f, 1.0f); 
-        glUniform3f(uViewPos, camPos.x, camPos.y, camPos.z);
-        glUniform3f(uFogColor, 0.7f, 0.85f, 0.95f);
-
-        // Lambda for cleaner rendering calls
-        auto drawPart = [&](GLuint vao, int count, glm::mat4 m) {
-            glUniformMatrix4fv(uModel, 1, GL_FALSE, glm::value_ptr(m));
-            glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(proj * view * m));
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLES, 0, count);
-        };
-
-        glm::mat4 base = glm::mat4(1.0f);
-        
-        // Character Assembly
-        drawPart(vaoTorso, N_TORSO, glm::translate(base, glm::vec3(0, 1.2f, 0)));
-        drawPart(vaoHead,  N_HEAD,  glm::translate(base, glm::vec3(0, 2.0f, 0)));
-        
-        for(float side : {-0.55f, 0.55f}) {
-            drawPart(vaoUpLimb, N_UP_LIMB, glm::translate(base, glm::vec3(side, 1.5f, 0)));
-            drawPart(vaoLowLimb, N_LOW_LIMB, glm::translate(base, glm::vec3(side * 0.8f, 0.6f, 0)));
+# 2. App-level build.gradle
+cat <<EOF > app/build.gradle
+plugins { id 'com.android.application' }
+android {
+    namespace 'com.game.procedural'
+    compileSdk 34
+    defaultConfig {
+        applicationId "com.game.procedural"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        externalNativeBuild { 
+            cmake { 
+                cppFlags "-std=c++17" 
+                arguments "-DANDROID_STL=c++_shared"
+            } 
         }
-
-        // Environment Assembly
-        drawPart(vaoTree, N_TREE, glm::translate(base, glm::vec3(-4, 2, -4)));
-        drawPart(vaoRock, N_ROCK, glm::translate(base, glm::vec3(3, 0.4f, 2)));
+        ndk { abiFilters 'arm64-v8a' }
     }
+    externalNativeBuild { cmake { path "CMakeLists.txt" } }
+}
+EOF
 
-    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onChanged(JNIEnv* env, jclass clz, jint w, jint h) {
-        screenW = (w > 0) ? w : 1; 
-        screenH = (h > 0) ? h : 1;
-        glViewport(0, 0, screenW, screenH);
+# 3. AndroidManifest.xml
+cat <<EOF > app/src/main/AndroidManifest.xml
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="EndlessRPG" android:hasCode="true" android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+        <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="landscape" android:configChanges="orientation|screenSize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+EOF
+
+# 4. Dependency Management: GLM (OpenGL Mathematics)
+# We fetch GLM directly into the project include directory to satisfy the native-lib.cpp requirement.
+echo "[setup_project.sh] Fetching GLM dependency..."
+mkdir -p app/src/main/cpp/include
+if [ ! -d "app/src/main/cpp/include/glm" ]; then
+    # Shallow clone for efficiency in CI environments
+    git clone --depth 1 https://github.com/g-truc/glm.git /tmp/glm_repo
+    mv /tmp/glm_repo/glm app/src/main/cpp/include/glm
+    rm -rf /tmp/glm_repo
+fi
+
+# 5. CMakeLists.txt (Crucial Fix)
+cat <<EOF > app/CMakeLists.txt
+cmake_minimum_required(VERSION 3.22.1)
+project("game_engine")
+
+# Include the directory containing glm/glm.hpp
+include_directories(src/main/cpp/include)
+
+add_library(game_engine SHARED src/main/cpp/native-lib.cpp)
+
+# Link GLESv3 and the Android logging library
+target_link_libraries(game_engine GLESv3 log)
+EOF
+
+# 6. MainActivity.java
+cat <<EOF > app/src/main/java/com/game/procedural/MainActivity.java
+package com.game.procedural;
+import android.app.Activity;
+import android.opengl.GLSurfaceView;
+import android.os.Bundle;
+import android.view.MotionEvent;
+import android.view.View;
+import javax.microedition.khronos.egl.EGLConfig;
+import javax.microedition.khronos.opengles.GL10;
+
+public class MainActivity extends Activity {
+    private GLSurfaceView gv;
+    private float joyX = 0, joyY = 0;
+    private float camYaw = 0, camPitch = 0.5f;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        gv = new GLSurfaceView(this);
+        gv.setEGLContextClientVersion(3);
+        gv.setRenderer(new GLSurfaceView.Renderer() {
+            public void onSurfaceCreated(GL10 gl, EGLConfig c) { GameLib.onCreated(); }
+            public void onSurfaceChanged(GL10 gl, int w, int h) { GameLib.onChanged(w, h); }
+            public void onDrawFrame(GL10 gl) { GameLib.onDraw(joyX, joyY, camYaw, camPitch); }
+        });
+        
+        gv.setOnTouchListener((v, e) -> {
+            if(e.getX() < v.getWidth()/2) {
+                joyX = (e.getX() / (v.getWidth()/4)) - 1.0f;
+                joyY = (e.getY() / (v.getHeight()/2)) - 1.0f;
+            } else {
+                camYaw += 0.01f;
+            }
+            if(e.getAction() == MotionEvent.ACTION_UP) { joyX = 0; joyY = 0; }
+            return true;
+        });
+        setContentView(gv);
     }
 }
 EOF
 
-echo "[generate_engine.sh] Success: Clean native-lib.cpp generated."
+# 7. GameLib.java
+cat <<EOF > app/src/main/java/com/game/procedural/GameLib.java
+package com.game.procedural;
+public class GameLib {
+    static { System.loadLibrary("game_engine"); }
+    public static native void onCreated();
+    public static native void onChanged(int w, int h);
+    public static native void onDraw(float jX, float jY, float yaw, float pitch);
+}
+EOF
+
+# 8. Settings.gradle
+echo "include ':app'" > settings.gradle
+
+echo "[setup_project.sh] Success: Android scaffold and GLM configured."
