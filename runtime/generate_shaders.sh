@@ -1,68 +1,87 @@
 #!/bin/bash
 # File: runtime/generate_shaders.sh
+# EndlessRPG v6 - Atmospheric Shader Pipeline
+set -e
 
+OUT="app/src/main/cpp/shaders/Shaders.h"
 mkdir -p app/src/main/cpp/shaders
 
-cat << 'EOF' > app/src/main/cpp/shaders/shaders.h
-#ifndef SHADERS_H
-#define SHADERS_H
+echo "// EndlessRPG Generated Shaders - v6" > $OUT
+echo "#ifndef SHADERS_H" >> $OUT
+echo "#define SHADERS_H" >> $OUT
 
-const char* VERTEX_SHADER = R"(#version 300 es
-layout(location=0) in vec3 p;
-layout(location=1) in vec3 n;
+# --- Vertex Shader ---
+# Handles Normals and Passes Fragment Position for Fog/Light calculations
+VS_SRC=$(cat <<'VEOF'
+#version 300 es
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec3 aCol;
+layout(location = 2) in vec3 aNorm;
+
 uniform mat4 uMVP;
 uniform mat4 uModel;
-out vec3 vN;
-out vec3 wP;
+
+out vec3 vCol;
+out vec3 vNorm;
+out vec3 vFragPos;
+
 void main() {
-    gl_Position = uMVP * vec4(p, 1.0);
-    vN = mat3(uModel) * n; // Rotate normals based on model orientation
-    wP = (uModel * vec4(p, 1.0)).xyz; // World position
-})";
-
-const char* FRAGMENT_SHADER = R"(#version 300 es
-precision mediump float;
-in vec3 vN;
-in vec3 wP;
-uniform vec3 uColor;
-out vec4 f;
-
-// Simple 2D noise for clouds
-float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-float noise(vec2 p) {
-    vec2 i = floor(p); vec2 f = fract(p);
-    vec2 u = f*f*(3.0-2.0*f);
-    return mix(mix(hash(i+vec2(0.0,0.0)), hash(i+vec2(1.0,0.0)), u.x),
-               mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), u.x), u.y);
+    vFragPos = vec3(uModel * vec4(aPos, 1.0));
+    // Normal matrix to handle non-uniform scaling/rotation
+    vNorm = mat3(transpose(inverse(uModel))) * aNorm;
+    vCol = aCol;
+    gl_Position = uMVP * vec4(aPos, 1.0);
 }
+VEOF
+)
+
+# --- Fragment Shader ---
+# Implements Phong Lighting + Exponential Squared Fog
+FS_SRC=$(cat <<'VEOF'
+#version 300 es
+precision mediump float;
+
+in vec3 vCol;
+in vec3 vNorm;
+in vec3 vFragPos;
+
+uniform vec3 uSunDir;
+uniform vec3 uViewPos;
+uniform vec3 uFogColor;
+
+out vec4 fragColor;
 
 void main() {
-    vec3 norm = normalize(vN);
-    vec3 lightDir = normalize(vec3(0.6, 0.8, 0.4));
+    // 1. Lighting Calculations
+    float ambient = 0.35;
+    vec3 norm = normalize(vNorm);
+    vec3 lightDir = normalize(uSunDir);
+    float diff = max(dot(norm, lightDir), 0.0);
     
-    // Crisp Cel-style diffuse lighting
-    float diff = max(0.4, dot(norm, lightDir));
-    if (diff > 0.4 && diff < 0.7) diff = 0.7; 
-    if (diff >= 0.7) diff = 1.0;
+    // Specular (Gloss)
+    vec3 viewDir = normalize(uViewPos - vFragPos);
+    vec3 reflectDir = reflect(-lightDir, norm);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 16.0) * 0.2;
 
-    vec3 col = uColor;
+    vec3 baseResult = (ambient + diff + spec) * vCol;
 
-    // Procedural Ground Grid (Only applied if color matches the ground green)
-    if (uColor.g > 0.5 && uColor.r < 0.3) {
-        float grid = max(step(0.95, fract(wP.x)), step(0.95, fract(wP.z)));
-        col = mix(col, col * 0.7, grid); // Darken the grid lines
-    }
+    // 2. Atmospheric Fog Calculation
+    float dist = length(uViewPos - vFragPos);
+    float fogDensity = 0.045; // Adjust this to match your skyline distance
+    float fogFactor = 1.0 / exp(pow(dist * fogDensity, 2.0));
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
 
-    // Atmospheric Fog
-    float dist = length(wP.xz - vec2(0.0)); // Radial distance from origin
-    float fog = clamp((dist - 15.0) / 25.0, 0.0, 1.0);
+    // Blend the object color with the skyline/fog color
+    // This makes distant objects fade into the horizon
+    vec3 finalColor = mix(uFogColor, baseResult, fogFactor);
 
-    // Procedural Sky with Noise Clouds
-    vec3 skyColor = mix(vec3(0.4, 0.65, 0.9), vec3(1.0), noise(wP.xz * 0.05 + wP.y * 0.1) * 0.6);
+    fragColor = vec4(finalColor, 1.0);
+}
+VEOF
+)
 
-    f = vec4(mix(col * diff, skyColor, fog), 1.0);
-})";
+echo "const char* WORLD_VS = R\"($VS_SRC)\";" >> $OUT
+echo "const char* WORLD_FS = R\"($FS_SRC)\";" >> $OUT
+echo "#endif" >> $OUT
 
-#endif
-EOF
-echo "[Shaders] Generated shaders.h"
+echo "[generate_shaders.sh] Success: Shaders.h generated with Atmospheric Fog."
