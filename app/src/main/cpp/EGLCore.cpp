@@ -2,6 +2,11 @@
 
 EGLCore::EGLCore() : display(EGL_NO_DISPLAY), surface(EGL_NO_SURFACE), context(EGL_NO_CONTEXT) {}
 
+// Added missing destructor
+EGLCore::~EGLCore() {
+    release();
+}
+
 bool EGLCore::init(ANativeWindow* window) {
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     eglInitialize(display, nullptr, nullptr);
@@ -12,7 +17,7 @@ bool EGLCore::init(ANativeWindow* window) {
         EGL_BLUE_SIZE, 8,
         EGL_GREEN_SIZE, 8,
         EGL_RED_SIZE, 8,
-        EGL_DEPTH_SIZE, 16, // Fixed: Added a 16-bit depth buffer for accurate 3D sorting
+        EGL_DEPTH_SIZE, 16, // Depth buffer for accurate 3D sorting
         EGL_NONE
     };
 
@@ -36,6 +41,24 @@ void EGLCore::swapBuffers() {
     if (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE) {
         eglSwapBuffers(display, surface);
     }
+}
+
+// Added missing getWidth method
+int EGLCore::getWidth() {
+    EGLint width = 0;
+    if (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE) {
+        eglQuerySurface(display, surface, EGL_WIDTH, &width);
+    }
+    return width;
+}
+
+// Added missing getHeight method
+int EGLCore::getHeight() {
+    EGLint height = 0;
+    if (display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE) {
+        eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+    }
+    return height;
 }
 
 void EGLCore::release() {
