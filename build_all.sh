@@ -1,38 +1,35 @@
 #!/bin/bash
 # File: build_all.sh
-# EndlessRPG Unified Build Pipeline v4 - Clean Model Generation
+# EndlessRPG Unified Build Pipeline - Restored Functional State
 
 set -e
 echo "=========================================="
-echo " EndlessRPG Build Pipeline v4"
+echo " EndlessRPG Build Pipeline - Restoring Legacy Pipeline"
 echo "=========================================="
 
-# 1. Clean and Prepare Directories
+# 1. Setup directories
+mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/cpp/models
 mkdir -p app/src/main/cpp/shaders
-mkdir -p app/src/main/java/com/game/procedural
 mkdir -p app/src/main/res/layout
+mkdir -p app/src/main/res/values
+mkdir -p app/src/main/res/drawable
+mkdir -p runtime/python
+mkdir -p scripts
 
-# 2. Grant Permissions
+# 2. Ensure executables have permissions
 chmod +x scripts/setup_project.sh
-chmod +x runtime/generate_models.sh
-chmod +x runtime/generate_shaders.sh
+chmod +x runtime/generate_assets.sh
 chmod +x runtime/generate_engine.sh
 
-# 3. Scaffold Android Architecture
-echo "[1/4] Generating Android configurations..."
+# 3. Execute the pipeline
+echo "[1/3] Generating Android configurations and Overlay UI..."
 ./scripts/setup_project.sh
 
-# 4. Generate 3D Models (REPLACED Blender with Shell Generator)
-echo "[2/4] Generating 3D Voxel Models..."
-./runtime/generate_models.sh
+echo "[2/3] Generating 3D Models via Blender..."
+./runtime/generate_assets.sh
 
-# 5. Generate Shaders
-echo "[3/4] Generating Shaders..."
-./runtime/generate_shaders.sh
-
-# 6. Generate C++ Engine
-echo "[4/4] Generating C++ Native Engine..."
+echo "[3/3] Generating C++ Native Engine..."
 ./runtime/generate_engine.sh
 
 echo "=========================================="
