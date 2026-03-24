@@ -5,26 +5,25 @@
 
 import bpy, math
 
-
 def build_sword():
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
 
     # Pommel
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=7,
-        radius=0.036, location=(0, 0, -0.036))
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=10, ring_count=7, radius=0.036, location=(0, 0, -0.036))
     pommel = bpy.context.object
     pommel.scale = (1.0, 0.75, 1.0)
     bpy.ops.object.transform_apply(scale=True)
 
     # Grip
-    bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=0.020,
-        depth=0.22, location=(0, 0, 0.11))
+    bpy.ops.mesh.primitive_cylinder_add(vertices=8, radius=0.020, depth=0.22, location=(0, 0, 0.11))
+    grip = bpy.context.object
 
     # Grip wrap ridges
+    ridges = []
     for zw in [0.04, 0.09, 0.14, 0.19]:
-        bpy.ops.mesh.primitive_torus_add(major_radius=0.022, minor_radius=0.004,
-            major_segments=8, minor_segments=4, location=(0, 0, zw))
+        bpy.ops.mesh.primitive_torus_add(major_radius=0.022, minor_radius=0.004, major_segments=8, minor_segments=4, location=(0, 0, zw))
+        ridges.append(bpy.context.object)
 
     # Cross-guard
     bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0.232))
@@ -43,11 +42,11 @@ def build_sword():
 
     # Blade
     blade_base, blade_len = 0.350, 0.585
-    bpy.ops.mesh.primitive_cube_add(size=1,
-        location=(0, 0, blade_base + blade_len))
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, blade_base + blade_len))
     blade = bpy.context.object
     blade.scale = (0.020, 0.0055, blade_len)
     bpy.ops.object.transform_apply(scale=True)
+
     tip_start = blade_base + blade_len * 2 - 0.18
     for v in blade.data.vertices:
         if v.co.z > tip_start:
@@ -56,15 +55,35 @@ def build_sword():
             v.co.y *= max(0.0, 1.0 - t)
 
     # Fuller grooves
+    fullers = []
     for sy in [-0.0030, 0.0030]:
-        bpy.ops.mesh.primitive_cube_add(size=1,
-            location=(0, sy, blade_base + blade_len * 0.55))
+        bpy.ops.mesh.primitive_cube_add(size=1, location=(0, sy, blade_base + blade_len * 0.55))
         f = bpy.context.object
         f.scale = (0.005, 0.0008, blade_len * 0.62)
         bpy.ops.object.transform_apply(scale=True)
+        fullers.append(f)
 
-    bpy.ops.object.select_all(action='SELECT')
-    bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
+    # Cut out the fullers
+    for f in fullers:
+        mod = blade.modifiers.new(type="BOOLEAN", name="Sub")
+        mod.operation = 'DIFFERENCE'
+        mod.object = f
+        bpy.context.view_layer.objects.active = blade
+        bpy.ops.object.modifier_apply(modifier="Sub")
+        bpy.data.objects.remove(f, do_unlink=True)
+
+    # Join 
+    objects_to_join = [pommel, grip, guard, ricasso, blade] + ridges
+    bpy.ops.object.select_all(action='DESELECT')
+    for obj in objects_to_join:
+        obj.select_set(True)
+    
+    bpy.context.view_layer.objects.active = blade
     bpy.ops.object.join()
-    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+    bpy.ops.object.shade_smooth()
+
     return bpy.context.active_object
+
+if __name__ == "__main__":
+    sword = build_sword()
+    sword.name = "Longsword"
