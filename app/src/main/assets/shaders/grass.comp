@@ -3,9 +3,10 @@ precision highp float;
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
+// Memory layout aligned with C++ SSBO
 struct Blade { 
-    vec4 pos; 
-    vec4 wind; 
+    vec4 pos;  // x (worldX), y (worldY - always 0), z (worldZ), w (height scale)
+    vec4 wind; // x (windDirX), y (windDirZ), z (rotation angle), w (wind strength)
 };
 
 layout(std430, binding = 0) buffer B { 
@@ -13,21 +14,16 @@ layout(std430, binding = 0) buffer B {
 };
 
 uniform float u_Time;
-uniform vec3 u_CameraPos; 
+uniform vec3 u_CameraPos;
 
-// Safely wrap coordinates to prevent mobile GPU floating-point precision loss
-vec2 safeMod(vec2 p, float m) {
-    return mod(p, m);
-}
-
-// Deterministic random hash
+// Bulletproof deterministic hash based on absolute coordinates
 float hash(vec2 p) { 
-    // Wrap at a large safe boundary (e.g., 1000 units) to keep precision high
-    p = safeMod(p, 1000.0);
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); 
+    vec2 p2 = fract(p * vec2(5.3983, 5.4427));
+    p2 += dot(p2.yx, p2.xy + vec2(21.5351, 14.3137));
+    return fract(p2.x * p2.y * 95.4337);
 }
 
-// Smooth 2D noise for natural terrain clumping
+// 2D Noise for natural terrain clumping (determines lush vs sparse areas)
 float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -41,38 +37,39 @@ void main() {
     uint y = gl_GlobalInvocationID.y;
     uint idx = y * 512u + x; 
     
+    // Grid density
     float spacing = 0.08; 
     float gridSize = 512.0 * spacing;
     
-    // Grid snapping for endless scrolling
-    vec2 camGrid = floor(u_CameraPos.xz / spacing) * spacing;
+    // --- DETERMINISTIC CHUNKING ---
+    // Safely snap the grid to the camera to create an endless rolling world.
+    // By rounding the camera position to the nearest spacing interval, 
+    // the blades remain mathematically anchored to the world space.
+    vec2 camGridCenter = floor(u_CameraPos.xz / spacing) * spacing;
+    
     vec2 localPos = vec2(float(x), float(y)) * spacing - (gridSize * 0.5);
-    vec2 worldPos = camGrid + localPos;
+    vec2 worldPos = camGridCenter + localPos;
     
-    // Apply jitter to make the placement organic
+    // --- ORGANIC PLACEMENT ---
+    // Jitter breaks the perfect computer grid. It is calculated using the 
+    // absolute worldPos so it never changes if you leave and come back.
     vec2 jitter = vec2(hash(worldPos * 13.3), hash(worldPos * 17.7)) * spacing * 1.5;
-    worldPos += jitter;
+    vec2 finalPos = worldPos + jitter;
     
-    // Deterministic organic clumping based on fixed world position
-    float terrainNoise = noise(worldPos * 0.3);
-    float h = 0.2 + (terrainNoise * 0.9) + (hash(worldPos) * 0.3);
+    // Terrain noise creates sweeping patches of tall grass and dips of shorter grass
+    float terrainNoise = noise(finalPos * 0.2);
+    float h = 0.3 + (terrainNoise * 1.2) + (hash(finalPos) * 0.4);
     
-    // Calculate a random 360-degree rotation (yaw) for each blade
-    // 6.2831853 is 2 * PI in radians
-    float yaw = hash(worldPos * 42.1) * 6.2831853;
+    // Calculate a random Y-axis rotation for photographic density (0 to 2*PI)
+    float rot = hash(finalPos * 23.1) * 6.2831853;
     
-    // Wrap time to prevent wind animation from breaking after a few minutes
-    float safeTime = safeMod(u_Time, 1000.0);
-    
-    // Complex overlapping wind waves
-    float windWave1 = sin(safeTime * 1.5 + worldPos.x * 0.2 + worldPos.y * 0.2);
-    float windWave2 = cos(safeTime * 2.2 - worldPos.x * 0.5 + worldPos.y * 0.3);
-    float w = (windWave1 + windWave2) * 0.35;
+    // --- DYNAMIC WIND ---
+    // Wind is the ONLY element that uses u_Time.
+    vec2 windDir = normalize(vec2(1.0, 1.0));
+    float windParam = u_Time * 1.5 + finalPos.x * 0.2 + finalPos.y * 0.2;
+    float w = (sin(windParam) + cos(windParam * 0.7)) * 0.4;
 
-    // Output to SSBO
-    blades[idx].pos = vec4(worldPos.x, 0.0, worldPos.y, h);
-    
-    // We store X/Z as wind direction, Y as our new Yaw rotation, and W as wind strength
-    // This perfectly preserves compatibility with our current Vertex Shader!
-    blades[idx].wind = vec4(1.0, yaw, 1.0, w); 
+    // Pack data into the SSBO for the Vertex Shader
+    blades[idx].pos = vec4(finalPos.x, 0.0, finalPos.y, h);
+    blades[idx].wind = vec4(windDir.x, windDir.y, rot, w); 
 }
