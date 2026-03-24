@@ -11,15 +11,11 @@ class EGLCore {
 public:
     EGLCore();
     ~EGLCore();
-
     bool init(ANativeWindow* window);
     void swapBuffers();
     void release();
-
-    // New additions to fetch the screen dimensions
     int getWidth();
     int getHeight();
-
 private:
     EGLDisplay display;
     EGLConfig  config;
