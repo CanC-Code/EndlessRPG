@@ -2,45 +2,63 @@
 #include <chrono>
 
 RenderLoop::RenderLoop(EGLCore* egl, GrassRenderer* renderer) 
-    : eglCore(egl), grassRenderer(renderer), running(false) {}
+    : eglCore(egl), grassRenderer(renderer), isRunning(false), activeWindow(nullptr) {}
 
-RenderLoop::~RenderLoop() {
-    stop();
-}
+RenderLoop::~RenderLoop() { stop(); }
 
 void RenderLoop::start() {
-    if (running) return;
-    running = true;
-    loopThread = std::thread(&RenderLoop::run, this);
+    isRunning = true;
+    renderThread = std::thread(&RenderLoop::run, this);
 }
 
 void RenderLoop::stop() {
-    running = false;
-    if (loopThread.joinable()) {
-        loopThread.join();
-    }
+    isRunning = false;
+    condVar.notify_all();
+    if (renderThread.joinable()) renderThread.join();
+}
+
+void RenderLoop::setWindow(ANativeWindow* window) {
+    std::lock_guard<std::mutex> lock(loopMutex);
+    activeWindow = window;
+    condVar.notify_all();
 }
 
 void RenderLoop::run() {
-    auto lastTime = std::chrono::high_resolution_clock::now();
-    float totalTime = 0.0f;
+    auto startTime = std::chrono::high_resolution_clock::now();
+    auto lastFrame = startTime;
 
-    while (running) {
-        auto currentTime = std::chrono::high_resolution_clock::now();
-        float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
-        lastTime = currentTime;
-        totalTime += deltaTime;
-
-        if (grassRenderer && eglCore) {
-            // Fetch dynamic screen size to handle rotation/scaling
-            int width = eglCore->getWidth();
-            int height = eglCore->getHeight();
-            
-            // Execute the compute logic and rendering
-            grassRenderer->updateAndRender(totalTime, deltaTime, width, height);
-            
-            // Push the drawn frame to the physical display
-            eglCore->swapBuffers();
+    while (isRunning) {
+        ANativeWindow* currentWindow = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(loopMutex);
+            if (!activeWindow) {
+                // If there's no window, safely wait instead of failing or turning black
+                condVar.wait(lock, [this] { return activeWindow != nullptr || !isRunning; });
+            }
+            currentWindow = activeWindow;
         }
+
+        if (!isRunning) break;
+
+        // Initialize EGL Surface if we have a window but no context
+        if (currentWindow && !eglCore->init(currentWindow)) {
+            continue; // Retry next cycle
+        }
+
+        // Calculate Time and DeltaTime
+        auto now = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float>(now - startTime).count();
+        float dt = std::chrono::duration<float>(now - lastFrame).count();
+        lastFrame = now;
+
+        // Force minimum safe screen dimensions
+        int w = eglCore->getWidth();
+        int h = eglCore->getHeight();
+        if (w <= 0) w = 1920; 
+        if (h <= 0) h = 1080;
+
+        // Draw and Swap
+        grassRenderer->updateAndRender(time, dt, w, h);
+        eglCore->swapBuffers();
     }
 }
