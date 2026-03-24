@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.view.ScaleGestureDetector
 import android.view.SurfaceView
 import android.view.SurfaceHolder
 import android.view.MotionEvent
@@ -14,43 +15,50 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
     private external fun onSurfaceCreated(surface: android.view.Surface)
     private external fun onSurfaceChanged(width: Int, height: Int)
     private external fun releaseNativeSurface()
-    private external fun updateInput(moveX: Float, moveY: Float, lookDX: Float, lookDY: Float)
+    
+    // UPDATED JNI: Now passes camera mode and zoom data
+    private external fun updateInput(moveX: Float, moveY: Float, lookDX: Float, lookDY: Float, isThirdPerson: Boolean, zoom: Float)
 
     private val surfaceView = SurfaceView(context)
 
     private var leftPointerId = -1
     private var rightPointerId = -1
     
-    // Fixed joystick variables
     private val maxRadius = 180f
     private var joyBaseX = 0f
     private var joyBaseY = 0f
     private var joyCurrentX = 0f
     private var joyCurrentY = 0f
-    
     private var moveX = 0f
     private var moveY = 0f
-    
     private var lastLookX = 0f
     private var lastLookY = 0f
 
-    // High-quality UI Styles
-    private val basePaint = Paint().apply {
-        color = Color.argb(40, 255, 255, 255) // Soft semi-transparent white
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
-    private val baseOutlinePaint = Paint().apply {
-        color = Color.argb(80, 255, 255, 255) // Distinct rim outline
-        style = Paint.Style.STROKE
-        strokeWidth = 6f
-        isAntiAlias = true
-    }
-    private val knobPaint = Paint().apply {
-        color = Color.argb(220, 255, 255, 255) // Solid bright white knob
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
+    // --- NEW: Camera State ---
+    private var isThirdPerson = false
+    private var cameraZoom = 5.0f
+
+    // --- NEW: Pinch-to-Zoom Detector ---
+    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            if (isThirdPerson) {
+                // If the user pinches OUT, scaleFactor > 1, so zoom decreases (moves closer)
+                cameraZoom /= detector.scaleFactor 
+                if (cameraZoom < 2.0f) cameraZoom = 2.0f
+                if (cameraZoom > 20.0f) cameraZoom = 20.0f
+            }
+            return true
+        }
+    })
+
+    // UI Styles
+    private val basePaint = Paint().apply { color = Color.argb(40, 255, 255, 255); style = Paint.Style.FILL; isAntiAlias = true }
+    private val baseOutlinePaint = Paint().apply { color = Color.argb(80, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 6f; isAntiAlias = true }
+    private val knobPaint = Paint().apply { color = Color.argb(220, 255, 255, 255); style = Paint.Style.FILL; isAntiAlias = true }
+    
+    // UI Button Styles
+    private val buttonPaint = Paint().apply { color = Color.argb(180, 40, 40, 40); style = Paint.Style.FILL; isAntiAlias = true }
+    private val buttonTextPaint = Paint().apply { color = Color.WHITE; textSize = 45f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
 
     init {
         surfaceView.holder.addCallback(this)
@@ -58,22 +66,22 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         setWillNotDraw(false) 
     }
 
-    // Calculate the permanent position of the joystick when the screen size is known
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         joyBaseX = w * 0.15f
-        if (joyBaseX < 250f) joyBaseX = 250f // Keep it safely away from the edge
+        if (joyBaseX < 250f) joyBaseX = 250f 
         joyBaseY = h - joyBaseX
-        
         joyCurrentX = joyBaseX
         joyCurrentY = joyBaseY
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // Feed touch events to the zoom detector first
+        scaleDetector.onTouchEvent(event)
+
         val action = event.actionMasked
         val pointerIndex = event.actionIndex
         val pointerId = event.getPointerId(pointerIndex)
-        
         val x = event.getX(pointerIndex)
         val y = event.getY(pointerIndex)
         val halfWidth = width / 2f
@@ -83,6 +91,13 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
 
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                // --- NEW: Check if the user tapped the View Toggle Button ---
+                if (x > 50f && x < 400f && y > 50f && y < 160f) {
+                    isThirdPerson = !isThirdPerson
+                    invalidate()
+                    return true 
+                }
+
                 if (x < halfWidth && leftPointerId == -1) {
                     leftPointerId = pointerId
                     updateJoystick(x, y)
@@ -100,7 +115,8 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
                     
                     if (id == leftPointerId) {
                         updateJoystick(px, py)
-                    } else if (id == rightPointerId) {
+                    } else if (id == rightPointerId && !scaleDetector.isInProgress) {
+                        // Only rotate camera if we aren't currently pinching to zoom
                         lookDX += px - lastLookX
                         lookDY += py - lastLookY
                         lastLookX = px
@@ -111,7 +127,6 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
                 if (pointerId == leftPointerId) {
                     leftPointerId = -1
-                    // Snap the knob cleanly back to the center
                     joyCurrentX = joyBaseX
                     joyCurrentY = joyBaseY
                     moveX = 0f
@@ -123,7 +138,8 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
             }
         }
         
-        updateInput(moveX, moveY, lookDX, lookDY)
+        // Push all state to C++
+        updateInput(moveX, moveY, lookDX, lookDY, isThirdPerson, cameraZoom)
         return true
     }
 
@@ -139,23 +155,23 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         
         joyCurrentX = joyBaseX + dx
         joyCurrentY = joyBaseY + dy
-        
-        // FIXED: moveX is now INVERTED to solve the left/right flip issue
         moveX = -(dx / maxRadius)
         moveY = -(dy / maxRadius) 
         invalidate()
     }
 
-    // Runs on top of the C++ OpenGL render
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas) 
         
-        // Constantly draw the base UI
+        // Draw Joystick
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, basePaint)
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, baseOutlinePaint)
-        
-        // Draw the moving knob
         canvas.drawCircle(joyCurrentX, joyCurrentY, maxRadius * 0.35f, knobPaint)
+
+        // --- NEW: Draw Toggle View Button ---
+        canvas.drawRoundRect(50f, 50f, 400f, 160f, 20f, 20f, buttonPaint)
+        val modeText = if (isThirdPerson) "3rd Person" else "1st Person"
+        canvas.drawText(modeText, 225f, 120f, buttonTextPaint)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) { onSurfaceCreated(holder.surface) }
