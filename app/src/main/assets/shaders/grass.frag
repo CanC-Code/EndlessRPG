@@ -1,18 +1,14 @@
 #version 310 es
 precision mediump float;
 
-in vec2 v_UV;
-in float v_HeightData;
-
+in float v_Height;
 out vec4 FragColor;
 
 void main() {
-    // Gradient from root to tip
-    vec3 rootColor = vec3(0.05, 0.2, 0.02);
-    vec3 tipColor = vec3(0.3, 0.5, 0.1);
+    vec3 colorBottom = vec3(0.05, 0.20, 0.05); // Dark, shaded roots
+    vec3 colorTop    = vec3(0.35, 0.65, 0.15); // Sunlit tips
     
-    // Add some sub-surface scattering fake by brightening the tips
-    vec3 finalColor = mix(rootColor, tipColor, v_HeightData);
+    vec3 finalColor = mix(colorBottom, colorTop, v_Height);
     
     FragColor = vec4(finalColor, 1.0);
 }
