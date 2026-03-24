@@ -66,9 +66,10 @@ JNIEXPORT void JNICALL Java_com_example_game_MainActivity_initAssetManager(JNIEn
 }
 
 JNIEXPORT void JNICALL Java_com_example_game_MainActivity_initEngine(JNIEnv* env, jobject thiz) {
-    engineThreadPool = new JobSystem(std::thread::hardware_concurrency());
+    unsigned int cores = std::thread::hardware_concurrency();
+    engineThreadPool = new JobSystem(cores > 0 ? cores : 4);
     for (int i = 0; i < 30; ++i) {
-        engineThreadPool->enqueue([i] { LOGI("Task %d running", i); });
+        engineThreadPool->enqueue([i] { LOGI("Computational logic %d running on core.", i); });
     }
 }
 
@@ -83,33 +84,15 @@ JNIEXPORT void JNICALL Java_com_example_game_GameSurfaceView_setNativeSurface(JN
     }
 }
 
-// FIX: This critical function was missing, causing UnsatisfiedLinkError crashes on surface exit
 JNIEXPORT void JNICALL Java_com_example_game_GameSurfaceView_releaseNativeSurface(JNIEnv* env, jobject thiz) {
-    if (mainLoop) {
-        mainLoop->stop();
-        delete mainLoop;
-        mainLoop = nullptr;
-    }
-    if (renderer) {
-        delete renderer;
-        renderer = nullptr;
-    }
-    if (graphicsBridge) {
-        graphicsBridge->release();
-        delete graphicsBridge;
-        graphicsBridge = nullptr;
-    }
-    if (nativeWindow) {
-        ANativeWindow_release(nativeWindow);
-        nativeWindow = nullptr;
-    }
+    if (mainLoop) { mainLoop->stop(); delete mainLoop; mainLoop = nullptr; }
+    if (renderer) { delete renderer; renderer = nullptr; }
+    if (graphicsBridge) { graphicsBridge->release(); delete graphicsBridge; graphicsBridge = nullptr; }
+    if (nativeWindow) { ANativeWindow_release(nativeWindow); nativeWindow = nullptr; }
 }
 
 JNIEXPORT void JNICALL Java_com_example_game_MainActivity_shutdownEngine(JNIEnv* env, jobject thiz) {
-    if (engineThreadPool) {
-        delete engineThreadPool;
-        engineThreadPool = nullptr;
-    }
+    if (engineThreadPool) { delete engineThreadPool; engineThreadPool = nullptr; }
 }
 
-} // extern "C"
+}
