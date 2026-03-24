@@ -2,6 +2,7 @@
 #include <GLES3/gl31.h>
 #include <string>
 #include <vector>
+#include "Character.h" // NEW: Required to use the Character class
 
 const int GRASS_COUNT = 262144; 
 
@@ -10,24 +11,24 @@ public:
     GrassRenderer();
     void init();
     void updateAndRender(float time, float deltaTime, int screenWidth, int screenHeight);
-    
+
     // UPDATED SIGNATURE: Supports view switching and pinch-to-zoom
     void updateInput(float mx, float my, float lx, float ly, bool isThirdPerson, float zoom);
 
-    // --- NEW: Separated Player Position ---
-    // This is where the actual "character" is standing in the world
+    // --- Separated Player Position ---
+    // This is where the physical character/collision logic exists
     float playerX = 0.0f;
     float playerY = 0.0f;
     float playerZ = 0.0f;
 
-    // Camera Position (Derived from player position + zoom orbit)
+    // Camera Position (Derived from player position + orbit logic)
     float camX = 0.0f;
     float camY = 1.8f;
     float camZ = 0.0f;
-    
+
     float camYaw = -90.0f; 
     float camPitch = 0.0f;
-    
+
     // Global Engine State
     float moveX = 0.0f;
     float moveY = 0.0f;
@@ -35,6 +36,9 @@ public:
     float cameraZoom = 5.0f;
 
 private:
+    // --- NEW: Player Model Instance ---
+    Character playerModel;
+
     // OpenGL Handles for Grass
     GLuint computeProgram, renderProgram;
     GLuint ssbo, vao, vbo;
@@ -55,7 +59,7 @@ private:
     void buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz);
     void multiply(float* out, const float* a, const float* b);
 
-    // CPU Terrain Math (To make the camera/player walk on the hills)
+    // CPU Terrain Math (Matches GLSL exactly for character-ground alignment)
     float fract(float x);
     float hash(float px, float py);
     float mix(float x, float y, float a);
