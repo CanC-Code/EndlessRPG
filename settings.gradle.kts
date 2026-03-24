@@ -5,7 +5,6 @@ pluginManagement {
         gradlePluginPortal()
     }
 }
-
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -13,7 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-
-// You can name this DungeonMaster or EndlessRPG to match your repository
-rootProject.name = "EndlessRPG" 
+rootProject.name = "EndlessRPG"
 include(":app")
