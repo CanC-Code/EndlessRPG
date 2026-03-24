@@ -1,17 +1,21 @@
 cmake_minimum_required(VERSION 3.22.1)
+
+# Define the name of the project
 project("procedural_engine")
 
+# Define the shared library and all C++ source files required to build it
 add_library(procedural_engine SHARED
     Engine.cpp
-    AssetManager.cpp
     EGLCore.cpp
     Renderer.cpp
-    RenderLoop.cpp)
+    RenderLoop.cpp
+    AssetManager.cpp
+    Character.cpp  # Added to support the new modular character system
+)
 
-find_library(log-lib log)
-find_library(android-lib android)
-find_library(egl-lib EGL)
-find_library(gles3-lib GLESv3)
-
+# Link the necessary Android and OpenGL libraries
 target_link_libraries(procedural_engine
-    ${log-lib} ${android-lib} ${egl-lib} ${gles3-lib})
+    android    # For native window and asset handling
+    GLESv3     # For OpenGL ES 3.1+ functionality
+    log        # For __android_log_print debugging
+)
