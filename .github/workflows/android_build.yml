@@ -1,52 +1,23 @@
-name: Build Procedural 3D Game
+name: Android CI Build
+
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Portable Blender (Fast)
-        run: |
-          curl -L https://mirrors.ocf.berkeley.edu/blender/release/Blender4.0/blender-4.0.2-linux-x64.tar.xz -o blender.tar.xz
-          tar -xvf blender.tar.xz --strip-components=1
-          # Add current directory to PATH so 'blender' command is globally available to scripts
-          echo "$(pwd)" >> $GITHUB_PATH
-
-      - name: Execute Full Modular Project Generation
-        run: |
-          # Grant execution permissions to the master wrapper and all sub-scripts
-          chmod +x build_all.sh
-          chmod +x scripts/setup_project.sh
-          chmod +x runtime/generate_assets.sh
-          chmod +x runtime/generate_engine.sh
-          
-          # Run the master pipeline to scaffold Android, build voxel assets, and inject C++
-          ./build_all.sh
-
-      - name: Initialize Gradle Wrapper
-        run: gradle wrapper
-
-      - name: Build Debug APK
-        run: |
-          chmod +x gradlew
-          # assembleDebug will now find the dynamically generated C++ models and UI resources
-          ./gradlew :app:assembleDebug
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ProceduralGame-Debug
-          path: app/build/outputs/apk/debug/*.apk
+    - uses: actions/checkout@v3
+    - name: set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    - name: Build with Gradle (Includes NDK C++ build)
+      run: ./gradlew assembleDebug
