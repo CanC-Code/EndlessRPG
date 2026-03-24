@@ -1,9 +1,10 @@
 #include <jni.h>
 #include <android/native_window_jni.h>
+#include <android/asset_manager_jni.h> // REQUIRED for AAssetManager_fromJava
 #include "EGLCore.h"
 #include "Renderer.h"
 #include "RenderLoop.h"
-#include "AssetManager.h" // FIXED: Added missing include for AssetManager
+#include "AssetManager.h"
 
 EGLCore* eglCore = nullptr;
 GrassRenderer* renderer = nullptr;
@@ -11,7 +12,9 @@ RenderLoop* renderLoop = nullptr;
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_game_MainActivity_initAssetManager(JNIEnv* env, jobject thiz, jobject assetManager) {
-    NativeAssetManager::init(env, assetManager);
+    // FIXED: Convert the Java jobject to a native AAssetManager* first
+    AAssetManager* nativeManager = AAssetManager_fromJava(env, assetManager);
+    NativeAssetManager::init(nativeManager); 
 }
 
 extern "C" JNIEXPORT void JNICALL
