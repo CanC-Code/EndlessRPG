@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <android/log.h>
+#include <android/asset_manager_jni.h>
 #include <vector>
 #include <thread>
 #include <queue>
@@ -7,11 +8,17 @@
 #include <condition_variable>
 #include <functional>
 
+// Internal headers
+#include "AssetManager.h"
+
 #define LOG_TAG "GameEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 // --- Job System (Thread Pool) ---
-// This prevents lag by limiting concurrent threads to the actual physical cores.
+/** * Manages a pool of worker threads. Packaged tasks (Jobs) are fed into the queue 
+ * and executed by the next available physical CPU core.
+ */
 class JobSystem {
 private:
     std::vector<std::thread> workers;
@@ -33,13 +40,12 @@ public:
                         task = std::move(this->tasks.front());
                         this->tasks.pop();
                     }
-                    task(); // Execute the procedural logic
+                    task(); // Execute procedural generation logic
                 }
             });
         }
     }
 
-    // Add one of your 30 computational processes here
     template<class F>
     void enqueue(F&& f) {
         {
@@ -61,30 +67,61 @@ public:
     }
 };
 
-// Global Engine State
+// --- Global Engine State ---
 JobSystem* engineThreadPool = nullptr;
 
-extern "C" JNIEXPORT void JNICALL
-Java_com_example_game_MainActivity_initEngine(JNIEnv* env, jobject /* this */) {
-    // Determine the number of hardware cores to prevent lag/thrashing
-    unsigned int cores = std::thread::hardware_concurrency();
-    if (cores == 0) cores = 4; // Fallback
+// --- JNI Bridge Functions ---
+
+extern "C" {
+
+/**
+ * Connects the Android OS Asset Manager to the Native C++ layer.
+ * This must be called before loading any shaders or textures.
+ */
+JNIEXPORT void JNICALL
+Java_com_example_game_MainActivity_initAssetManager(JNIEnv* env, jobject /* this */, jobject javaAssetManager) {
+    AAssetManager* nativeManager = AAssetManager_fromJava(env, javaAssetManager);
+    if (nativeManager == nullptr) {
+        LOGE("Failed to extract AAssetManager from Java object.");
+        return;
+    }
     
-    LOGI("Initializing Engine Thread Pool with %u cores", cores);
+    NativeAssetManager::init(nativeManager);
+    LOGI("Native Asset Manager linked and initialized.");
+}
+
+/**
+ * Initializes the multithreaded job system based on device hardware.
+ */
+JNIEXPORT void JNICALL
+Java_com_example_game_MainActivity_initEngine(JNIEnv* env, jobject /* this */) {
+    // Check hardware to prevent thread thrashing
+    unsigned int cores = std::thread::hardware_concurrency();
+    if (cores == 0) cores = 4; // Sensible default for mobile
+    
+    LOGI("Booting DungeonMaster Engine with JobSystem on %u cores.", cores);
     engineThreadPool = new JobSystem(cores);
 
-    // Example: Queuing up 30 procedural generation tasks safely
+    // Initial load: Queue the 30 logical processes for world generation
     for (int i = 0; i < 30; ++i) {
         engineThreadPool->enqueue([i] {
-            // This is where grass growth logic, wind physics, or terrain chunk generation happens
-            LOGI("Executing background process %d on worker thread", i);
+            // Placeholder for real logic: terrain heightmap generation, 
+            // vegetation distribution patterns, or water flow logic.
+            LOGI("JobSystem: Processing procedural logic chunk %d...", i);
         });
     }
 }
 
-extern "C" JNIEXPORT void JNICALL
+/**
+ * Cleanly shuts down the engine and releases memory.
+ */
+JNIEXPORT void JNICALL
 Java_com_example_game_MainActivity_shutdownEngine(JNIEnv* env, jobject /* this */) {
-    delete engineThreadPool;
-    engineThreadPool = nullptr;
-    LOGI("Engine shut down safely.");
+    if (engineThreadPool) {
+        delete engineThreadPool;
+        engineThreadPool = nullptr;
+    }
+    LOGI("DungeonMaster Engine shut down gracefully.");
 }
+
+} // extern "C"
