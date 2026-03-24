@@ -69,8 +69,6 @@ void GrassRenderer::init() {
     std::string cSrc = NativeAssetManager::loadShaderText("shaders/grass.comp");
     std::string vSrc = NativeAssetManager::loadShaderText("shaders/grass.vert");
     std::string fSrc = NativeAssetManager::loadShaderText("shaders/grass.frag");
-
-    LOGI("Compiling Shaders... (Comp: %zu bytes, Vert: %zu bytes)", cSrc.length(), vSrc.length());
     
     GLuint cs = compileShader(GL_COMPUTE_SHADER, cSrc);
     GLuint vs = compileShader(GL_VERTEX_SHADER, vSrc);
@@ -81,6 +79,7 @@ void GrassRenderer::init() {
 
     if (computeProgram == 0 || renderProgram == 0) {
         LOGE("CRITICAL: Shader programs failed to initialize!");
+        return;
     }
 
     // Initialize SSBO for 262,144 grass blades
@@ -109,31 +108,30 @@ void GrassRenderer::init() {
 }
 
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
-    // 1. ALWAYS clear the screen first. This confirms the EGL loop is alive.
     glViewport(0, 0, width, height);
     glClearColor(0.6f, 0.8f, 1.0f, 1.0f); // Sky Blue
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // 2. Check if shaders are valid
     if (computeProgram == 0 || renderProgram == 0) return;
 
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
 
-    // 3. Compute Pass (Wind Physics)
+    // --- Compute Pass ---
     glUseProgram(computeProgram);
     glUniform1f(glGetUniformLocation(computeProgram, "u_Time"), time);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
     glDispatchCompute(512 / 16, 512 / 16, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    // 4. Render Pass
+    // --- Render Pass ---
     glUseProgram(renderProgram);
     
     float aspect = (float)width / (float)height;
     float proj[16], view[16], vp[16];
+    
     buildPerspective(proj, 0.785f, aspect, 0.1f, 1000.0f);
-    // Camera positioned low to see the grass density
+    // Camera positioned at Z = -10, looking slightly forward into the grass field
     buildLookAt(view, 0.0f, 1.8f, -10.0f, 0.0f, 0.5f, 0.0f);
     multiply(vp, proj, view);
 
@@ -143,26 +141,53 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 7, GRASS_COUNT);
 }
 
-// Matrix helper implementations...
+// --- Corrected Matrix Math ---
+
 void GrassRenderer::buildPerspective(float* m, float fov, float aspect, float zn, float zf) {
     float f = 1.0f / tanf(fov / 2.0f);
     for(int i=0; i<16; i++) m[i] = 0.0f;
-    m[0] = f / aspect; m[5] = f; m[10] = (zf+zn)/(zn-zf); m[11] = -1.0f; m[14] = (2.0f*zf*zn)/(zn-zf);
+    m[0] = f / aspect; 
+    m[5] = f; 
+    m[10] = (zf+zn)/(zn-zf); 
+    m[11] = -1.0f; 
+    m[14] = (2.0f*zf*zn)/(zn-zf);
 }
+
 void GrassRenderer::buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz) {
-    float fx = cx-ex, fy = cy-ey, fz = cz-ez;
+    float fx = cx - ex, fy = cy - ey, fz = cz - ez;
     float rlf = 1.0f / sqrtf(fx*fx + fy*fy + fz*fz);
     fx *= rlf; fy *= rlf; fz *= rlf;
-    float sx = fy*0.0f - fz*1.0f, sy = fz*0.0f - fx*0.0f, sz = fx*1.0f - fy*0.0f;
+    
+    float sx = fy*0.0f - fz*1.0f;
+    float sy = fz*0.0f - fx*0.0f;
+    float sz = fx*1.0f - fy*0.0f;
     float rls = 1.0f / sqrtf(sx*sx + sy*sy + sz*sz);
     sx *= rls; sy *= rls; sz *= rls;
-    float ux = sy*fz - sz*fy, uy = sz*fx - sx*fz, uz = sx*fy - sy*fx;
-    m[0]=sx; m[4]=ux; m[8]=-fx; m[12]=0.0f; m[1]=sy; m[5]=uy; m[9]=-fy; m[13]=0.0f;
-    m[2]=sz; m[6]=uz; m[10]=-fz; m[14]=0.0f; m[3]=0.0f; m[7]=0.0f; m[11]=0.0f; m[15]=1.0f;
-    m[12]+=m[0]*-ex+m[4]*-ey+m[8]*-ez; m[13]+=m[1]*-ex+m[5]*-uy+m[9]*-ez; m[14]+=m[2]*-ex+m[6]*-ey+m[10]*-ez;
+    
+    float ux = sy*fz - sz*fy;
+    float uy = sz*fx - sx*fz;
+    float uz = sx*fy - sy*fx;
+    
+    m[0]=sx; m[4]=ux; m[8]=-fx; m[12]=0.0f; 
+    m[1]=sy; m[5]=uy; m[9]=-fy; m[13]=0.0f;
+    m[2]=sz; m[6]=uz; m[10]=-fz; m[14]=0.0f; 
+    m[3]=0.0f; m[7]=0.0f; m[11]=0.0f; m[15]=1.0f;
+
+    // FIX: Safely translate the camera using standard dot products
+    m[12] = -(m[0]*ex + m[4]*ey + m[8]*ez);
+    m[13] = -(m[1]*ex + m[5]*ey + m[9]*ez);
+    m[14] = -(m[2]*ex + m[6]*ey + m[10]*ez);
 }
+
 void GrassRenderer::multiply(float* out, const float* a, const float* b) {
-    for (int i=0; i<4; i++) for (int j=0; j<4; j++) {
-        out[j*4+i] = a[0*4+i]*b[j*4+0] + a[1*4+i]*b[j*4+1] + a[2*4+i]*b[j*4+2] + a[3*4+i]*b[j*4+3];
+    float temp[16];
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            temp[j * 4 + i] = a[0 * 4 + i] * b[j * 4 + 0] + 
+                              a[1 * 4 + i] * b[j * 4 + 1] + 
+                              a[2 * 4 + i] * b[j * 4 + 2] + 
+                              a[3 * 4 + i] * b[j * 4 + 3];
+        }
     }
+    for (int i = 0; i < 16; i++) out[i] = temp[i];
 }
