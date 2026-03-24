@@ -40,30 +40,16 @@ float fbm(vec2 p) {
     return f;
 }
 
-// ==========================================
-// --- ADVANCED TERRAIN ELEVATION MATH ---
-// ==========================================
+// Generates the identical terrain height map to the ground mesh
 float getElevation(vec2 pos) {
-    // 1. Base Continent Noise (Determines where biomes are)
     float base = fbm(pos * 0.005);
-    
-    // 2. Mountains: Exponents create sharp peaks and wide, flat valleys
     float mountains = pow(fbm(pos * 0.015 + vec2(100.0)), 2.5) * 50.0;
-    
-    // 3. Plateaus: Smoothstep creates sudden cliffs and flat tops
     float plateaus = smoothstep(0.4, 0.6, fbm(pos * 0.02)) * 12.0;
-    
-    // 4. Rolling Hills: Standard smooth noise
     float hills = fbm(pos * 0.035) * 8.0;
-    
-    // 5. Biome Mask: Seamlessly blend between flatlands/hills and mountainous regions
     float biomeMask = smoothstep(0.35, 0.65, base);
     
-    // Combine macro terrain
     float elevation = mix(plateaus + hills, mountains, biomeMask);
-    
-    // 6. Micro-details (Subtle dirt bumps so flat areas aren't completely artificial)
-    elevation += fbm(pos * 0.3) * 0.4;
+    elevation += fbm(pos * 0.3) * 0.4; // Micro-details
     
     return elevation;
 }
@@ -83,15 +69,39 @@ void main() {
     vec2 jitter = vec2(hash(worldPos * 13.3), hash(worldPos * 17.7)) * spacing * 1.5;
     vec2 finalPos = worldPos + jitter;
     
-    // Get the exact terrain height at this blade's location
     float elevation = getElevation(finalPos);
     
-    // Plant Growth (Lush in valleys, sparse on steep slopes or high peaks)
-    float terrainNoise = noise(finalPos * 0.2);
-    float plantScale = 0.3 + (terrainNoise * 1.2) + (hash(finalPos) * 0.4);
+    // ==========================================
+    // --- HYPER-REALISTIC GROWTH & SURVIVAL ---
+    // ==========================================
+    
+    // 1. Calculate the physical steepness of the terrain (Slope)
+    float eps = 0.1;
+    float hL = getElevation(finalPos + vec2(-eps, 0.0));
+    float hR = getElevation(finalPos + vec2(eps, 0.0));
+    float hD = getElevation(finalPos + vec2(0.0, -eps));
+    float hU = getElevation(finalPos + vec2(0.0, eps));
+    
+    // Create a 3D normal vector to find the angle of the hill
+    vec3 normal = normalize(vec3(hL - hR, 2.0 * eps, hD - hU));
+    float slope = 1.0 - normal.y; // 0.0 is flat dirt, 1.0 is a vertical cliff
+    
+    // 2. Erosion Masking: Grass roots cannot hold onto steep rock faces.
+    // It will only grow on the flat "dirt and dust" layers, leaving cliffs exposed.
+    float slopeSurvival = 1.0 - smoothstep(0.20, 0.40, slope);
+    
+    // 3. Organic Root Clumping: Grass drops seeds in clusters, leaving dusty patches empty.
+    float rootCluster = smoothstep(0.2, 0.8, noise(finalPos * 2.5));
+    float microDensity = noise(finalPos * 12.0); // Tiny dense micro-tufts
+    float growthDensity = rootCluster * (0.4 + 0.6 * microDensity);
+    
+    // 4. Final Plant Scale
+    // If the plant is on a cliff or in a dead patch, scale hits 0.0 and the GPU instantly culls it!
+    float plantScale = (0.2 + (growthDensity * 1.3) + (hash(finalPos) * 0.4)) * slopeSurvival;
+    
     float rot = hash(finalPos * 23.1) * 6.2831853;
     
-    // Global Fluid Wind
+    // --- Global Fluid Wind ---
     vec2 baseWindDir = normalize(vec2(1.0, 0.6));
     float windSpeed = 3.5;
     vec2 windScroll = baseWindDir * (u_Time * windSpeed);
@@ -112,7 +122,7 @@ void main() {
         baseWindDir.x * sinA + baseWindDir.y * cosA
     );
 
-    // FIXED: The y-coordinate is now the terrain elevation instead of 0.0
+    // Output to SSBO
     blades[idx].pos = vec4(finalPos.x, elevation, finalPos.y, plantScale);
     blades[idx].wind = vec4(finalWindDir.x, finalWindDir.y, rot, finalWindStrength); 
 }
