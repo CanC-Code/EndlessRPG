@@ -11,74 +11,49 @@ cat <<EOF > $OUT
 #include "shaders/Shaders.h"
 
 GLuint prog;
-GLuint vaoHead, vaoBody, vaoLimb;
-GLint uMVP, uModel, uSunDir, uViewPos;
-int screenW=1, screenH=1;
+GLuint vaoH, vaoB, vaoL;
+GLint uMVP, uModel, uSun, uView;
+int sw=1, sh=1;
 
-GLuint createVAO(const float* data, int count) {
-    GLuint vao, vbo;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, count * 9 * sizeof(float), data, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 9*sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 9*sizeof(float), (void*)(3*sizeof(float)));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 9*sizeof(float), (void*)(6*sizeof(float)));
-    glEnableVertexAttribArray(2);
-    return vao;
+GLuint mkVAO(const float* d, int c) {
+    GLuint v, b;
+    glGenVertexArrays(1, &v); glGenBuffers(1, &b);
+    glBindVertexArray(v); glBindBuffer(GL_ARRAY_BUFFER, b);
+    glBufferData(GL_ARRAY_BUFFER, c * 9 * sizeof(float), d, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, 0, 36, (void*)0); glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, 0, 36, (void*)12); glEnableVertexAttribArray(1);
+    glVertexAttribPointer(2, 3, GL_FLOAT, 0, 36, (void*)24); glEnableVertexAttribArray(2);
+    return v;
 }
 
 extern "C" {
-    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onCreated(JNIEnv* env, jclass clz) {
+    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onCreated(JNIEnv* e, jclass c) {
         GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vs, 1, &WORLD_VS, NULL); glCompileShader(vs);
+        glShaderSource(vs, 1, &WORLD_VS, 0); glCompileShader(vs);
         GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fs, 1, &WORLD_FS, NULL); glCompileShader(fs);
-        prog = glCreateProgram();
-        glAttachShader(prog, vs); glAttachShader(prog, fs);
-        glLinkProgram(prog);
-
-        uMVP = glGetUniformLocation(prog, "uMVP");
-        uModel = glGetUniformLocation(prog, "uModel");
-        uSunDir = glGetUniformLocation(prog, "uSunDir");
-        uViewPos = glGetUniformLocation(prog, "uViewPos");
-
-        vaoHead = createVAO(M_HEAD, N_HEAD);
-        vaoBody = createVAO(M_BODY, N_BODY);
-        vaoLimb = createVAO(M_LIMB, N_LIMB);
+        glShaderSource(fs, 1, &WORLD_FS, 0); glCompileShader(fs);
+        prog = glCreateProgram(); glAttachShader(prog, vs); glAttachShader(prog, fs); glLinkProgram(prog);
+        uMVP = glGetUniformLocation(prog, "uMVP"); uModel = glGetUniformLocation(prog, "uModel");
+        uSun = glGetUniformLocation(prog, "uSunDir"); uView = glGetUniformLocation(prog, "uViewPos");
+        vaoH = mkVAO(M_HEAD, N_HEAD); vaoB = mkVAO(M_BODY, N_BODY); vaoL = mkVAO(M_LIMB, N_LIMB);
     }
-
-    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onDraw(JNIEnv* env, jclass clz, 
-        float jX, float jY, float yaw, float pitch) {
-        
-        glClearColor(0.7f, 0.8f, 0.9f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glEnable(GL_DEPTH_TEST);
-        glUseProgram(prog);
-
-        glm::vec3 camPos = glm::vec3(10.0f * cos(pitch) * sin(yaw), 10.0f * sin(pitch), 10.0f * cos(pitch) * cos(yaw));
-        glm::mat4 view = glm::lookAt(camPos, glm::vec3(0, 1.0f, 0), glm::vec3(0, 1, 0));
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)screenW/screenH, 0.1f, 100.0f);
-
-        glUniform3f(uSunDir, 1.0f, 1.0f, 1.0f);
-        glUniform3f(uViewPos, camPos.x, camPos.y, camPos.z);
-
-        auto draw = [&](GLuint vao, int n, glm::mat4 m) {
-            glUniformMatrix4fv(uModel, 1, GL_FALSE, glm::value_ptr(m));
-            glUniformMatrix4fv(uMVP, 1, GL_FALSE, glm::value_ptr(proj * view * m));
-            glBindVertexArray(vao);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, n);
+    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onDraw(JNIEnv* e, jclass c, float jX, float jY, float y, float p) {
+        glClearColor(0.7f, 0.85f, 0.95f, 1.0f); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        glEnable(GL_DEPTH_TEST); glUseProgram(prog);
+        glm::vec3 cp = glm::vec3(12.0f*cos(p)*sin(y), 12.0f*sin(p), 12.0f*cos(p)*cos(y));
+        glm::mat4 v = glm::lookAt(cp, {0,1,0}, {0,1,0});
+        glm::mat4 pr = glm::perspective(0.8f, (float)sw/sh, 0.1f, 100.0f);
+        glUniform3f(uSun, 1, 2, 1); glUniform3f(uView, cp.x, cp.y, cp.z);
+        auto dr = [&](GLuint vao, int n, glm::mat4 m) {
+            glUniformMatrix4fv(uModel, 1, 0, glm::value_ptr(m));
+            glUniformMatrix4fv(uMVP, 1, 0, glm::value_ptr(pr*v*m));
+            glBindVertexArray(vao); glDrawArrays(GL_TRIANGLES, 0, n);
         };
-
-        draw(vaoBody, N_BODY, glm::translate(glm::mat4(1.0f), {0, 0.5, 0}));
-        draw(vaoHead, N_HEAD, glm::translate(glm::mat4(1.0f), {0, 1.6, 0}));
+        dr(vaoB, N_BODY, glm::translate(glm::mat4(1), {0, 0.8, 0}));
+        dr(vaoH, N_HEAD, glm::translate(glm::mat4(1), {0, 1.8, 0}));
     }
-
-    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onChanged(JNIEnv* env, jclass clz, int w, int h) {
-        screenW = w; screenH = h; glViewport(0, 0, w, h);
+    JNIEXPORT void JNICALL Java_com_game_procedural_GameLib_onChanged(JNIEnv* e, jclass c, int w, int h) {
+        sw=w; sh=h; glViewport(0,0,w,h);
     }
 }
 EOF
