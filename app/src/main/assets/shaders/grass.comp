@@ -13,25 +13,32 @@ layout(std430, binding = 0) buffer B {
 };
 
 uniform float u_Time;
-uniform vec2 u_WindDirection;
-uniform float u_WindStrength;
-uniform vec3 u_ChunkOffset;
 
+// Procedural random hash
 float hash(vec2 p) { 
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); 
 }
 
 void main() {
-    uint i = gl_GlobalInvocationID.y * 256u + gl_GlobalInvocationID.x;
-    vec2 p = vec2(gl_GlobalInvocationID.xy);
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    // Assuming a 512x512 grid
+    uint idx = y * 512u + x; 
     
-    // Calculate randomized height
-    float h = 0.5 + hash(p) * 0.8;
+    // Spread the 512x512 grid over a 50x50 world area
+    vec2 gridPos = vec2(float(x), float(y)) / 512.0 * 50.0 - 25.0;
     
-    // Apply the wind strength uniform you passed from C++
-    float w = sin(u_Time * 2.0 + p.x * 0.1 + p.y * 0.1) * u_WindStrength;
+    // Add jitter so it doesn't look like a perfect grid
+    vec2 jitter = vec2(hash(gridPos), hash(gridPos + 1.0)) * 0.15;
+    vec2 worldPos = gridPos + jitter;
     
-    // Factor in chunk offsets and wind direction
-    blades[i].pos = vec4(p.x + u_ChunkOffset.x, 0.0, p.y + u_ChunkOffset.z, h);
-    blades[i].wind = vec4(u_WindDirection.x, 0.0, u_WindDirection.y, w);
+    // Random height variations (0.6 to 1.1)
+    float h = 0.6 + hash(worldPos) * 0.5;
+    
+    // Wind noise based on time and position
+    float windParam = u_Time * 2.0 + worldPos.x * 0.5 + worldPos.y * 0.5;
+    float w = (sin(windParam) + sin(windParam * 0.5)) * 0.4;
+    
+    blades[idx].pos = vec4(worldPos.x, 0.0, worldPos.y, h);
+    blades[idx].wind = vec4(1.0, 0.0, 1.0, w); // x, z wind direction; w is strength
 }
