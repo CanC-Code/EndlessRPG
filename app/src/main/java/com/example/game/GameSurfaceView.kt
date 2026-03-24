@@ -10,13 +10,13 @@ import android.view.SurfaceHolder
 import android.view.MotionEvent
 import android.widget.FrameLayout
 import kotlin.math.hypot
+import kotlin.math.pow
+import kotlin.math.sign
 
 class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Callback {
     private external fun onSurfaceCreated(surface: android.view.Surface)
     private external fun onSurfaceChanged(width: Int, height: Int)
     private external fun releaseNativeSurface()
-    
-    // UPDATED JNI: Now passes camera mode and zoom data
     private external fun updateInput(moveX: Float, moveY: Float, lookDX: Float, lookDY: Float, isThirdPerson: Boolean, zoom: Float)
 
     private val surfaceView = SurfaceView(context)
@@ -24,41 +24,59 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
     private var leftPointerId = -1
     private var rightPointerId = -1
     
-    private val maxRadius = 180f
+    // --- ERGONOMIC ADJUSTMENTS ---
+    private val maxRadius = 130f // Reduced from 180f for better ergonomics
     private var joyBaseX = 0f
     private var joyBaseY = 0f
     private var joyCurrentX = 0f
     private var joyCurrentY = 0f
+    
     private var moveX = 0f
     private var moveY = 0f
     private var lastLookX = 0f
     private var lastLookY = 0f
 
-    // --- NEW: Camera State ---
     private var isThirdPerson = false
-    private var cameraZoom = 5.0f
+    private var cameraZoom = 8.0f // Slightly further default for better scale
 
-    // --- NEW: Pinch-to-Zoom Detector ---
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             if (isThirdPerson) {
-                // If the user pinches OUT, scaleFactor > 1, so zoom decreases (moves closer)
                 cameraZoom /= detector.scaleFactor 
-                if (cameraZoom < 2.0f) cameraZoom = 2.0f
-                if (cameraZoom > 20.0f) cameraZoom = 20.0f
+                cameraZoom = cameraZoom.coerceIn(2.0f, 30.0f)
             }
             return true
         }
     })
 
-    // UI Styles
-    private val basePaint = Paint().apply { color = Color.argb(40, 255, 255, 255); style = Paint.Style.FILL; isAntiAlias = true }
-    private val baseOutlinePaint = Paint().apply { color = Color.argb(80, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 6f; isAntiAlias = true }
-    private val knobPaint = Paint().apply { color = Color.argb(220, 255, 255, 255); style = Paint.Style.FILL; isAntiAlias = true }
-    
-    // UI Button Styles
-    private val buttonPaint = Paint().apply { color = Color.argb(180, 40, 40, 40); style = Paint.Style.FILL; isAntiAlias = true }
-    private val buttonTextPaint = Paint().apply { color = Color.WHITE; textSize = 45f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
+    // --- REFINED UI STYLES ---
+    private val basePaint = Paint().apply {
+        color = Color.argb(30, 255, 255, 255)
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+    private val baseOutlinePaint = Paint().apply {
+        color = Color.argb(60, 255, 255, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = 4f // Thinner, more professional line
+        isAntiAlias = true
+    }
+    private val knobPaint = Paint().apply {
+        color = Color.argb(200, 255, 255, 255)
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+    private val buttonPaint = Paint().apply { 
+        color = Color.argb(160, 20, 20, 20)
+        style = Paint.Style.FILL
+        isAntiAlias = true 
+    }
+    private val buttonTextPaint = Paint().apply { 
+        color = Color.WHITE
+        textSize = 40f
+        textAlign = Paint.Align.CENTER
+        isAntiAlias = true 
+    }
 
     init {
         surfaceView.holder.addCallback(this)
@@ -68,15 +86,14 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        // Positioned 15% from left, 15% from bottom
         joyBaseX = w * 0.15f
-        if (joyBaseX < 250f) joyBaseX = 250f 
-        joyBaseY = h - joyBaseX
+        joyBaseY = h - (h * 0.15f)
         joyCurrentX = joyBaseX
         joyCurrentY = joyBaseY
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Feed touch events to the zoom detector first
         scaleDetector.onTouchEvent(event)
 
         val action = event.actionMasked
@@ -84,24 +101,23 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         val pointerId = event.getPointerId(pointerIndex)
         val x = event.getX(pointerIndex)
         val y = event.getY(pointerIndex)
-        val halfWidth = width / 2f
 
         var lookDX = 0f
         var lookDY = 0f
 
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                // --- NEW: Check if the user tapped the View Toggle Button ---
-                if (x > 50f && x < 400f && y > 50f && y < 160f) {
+                // Button Detection (Top Left)
+                if (x < 450f && y < 200f) {
                     isThirdPerson = !isThirdPerson
                     invalidate()
                     return true 
                 }
 
-                if (x < halfWidth && leftPointerId == -1) {
+                if (x < width / 2f && leftPointerId == -1) {
                     leftPointerId = pointerId
                     updateJoystick(x, y)
-                } else if (x >= halfWidth && rightPointerId == -1) {
+                } else if (x >= width / 2f && rightPointerId == -1) {
                     rightPointerId = pointerId
                     lastLookX = x
                     lastLookY = y
@@ -116,9 +132,14 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
                     if (id == leftPointerId) {
                         updateJoystick(px, py)
                     } else if (id == rightPointerId && !scaleDetector.isInProgress) {
-                        // Only rotate camera if we aren't currently pinching to zoom
-                        lookDX += px - lastLookX
-                        lookDY += py - lastLookY
+                        // --- CAMERA SMOOTHING CURVE ---
+                        // Applying a mild power curve makes small movements more precise
+                        val rawDX = px - lastLookX
+                        val rawDY = py - lastLookY
+                        
+                        lookDX += rawDX.pow(1.2f * sign(rawDX)) // Quadratic sensitivity
+                        lookDY += rawDY.pow(1.2f * sign(rawDY))
+                        
                         lastLookX = px
                         lastLookY = py
                     }
@@ -138,7 +159,6 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
             }
         }
         
-        // Push all state to C++
         updateInput(moveX, moveY, lookDX, lookDY, isThirdPerson, cameraZoom)
         return true
     }
@@ -148,6 +168,13 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         var dy = py - joyBaseY
         val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
         
+        // Deadzone check (ignore tiny accidental movements)
+        if (dist < 10f) {
+            moveX = 0f
+            moveY = 0f
+            return
+        }
+
         if (dist > maxRadius) {
             dx = (dx / dist) * maxRadius
             dy = (dy / dist) * maxRadius
@@ -155,6 +182,8 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         
         joyCurrentX = joyBaseX + dx
         joyCurrentY = joyBaseY + dy
+        
+        // Inverted DX for correct movement vector
         moveX = -(dx / maxRadius)
         moveY = -(dy / maxRadius) 
         invalidate()
@@ -163,15 +192,17 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas) 
         
-        // Draw Joystick
+        // Joystick Base
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, basePaint)
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, baseOutlinePaint)
-        canvas.drawCircle(joyCurrentX, joyCurrentY, maxRadius * 0.35f, knobPaint)
+        
+        // Knob
+        canvas.drawCircle(joyCurrentX, joyCurrentY, maxRadius * 0.4f, knobPaint)
 
-        // --- NEW: Draw Toggle View Button ---
-        canvas.drawRoundRect(50f, 50f, 400f, 160f, 20f, 20f, buttonPaint)
-        val modeText = if (isThirdPerson) "3rd Person" else "1st Person"
-        canvas.drawText(modeText, 225f, 120f, buttonTextPaint)
+        // Refined Toggle Button
+        canvas.drawRoundRect(60f, 60f, 410f, 170f, 30f, 30f, buttonPaint)
+        val modeText = if (isThirdPerson) "VIEW: 3RD" else "VIEW: 1ST"
+        canvas.drawText(modeText, 235f, 130f, buttonTextPaint)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) { onSurfaceCreated(holder.surface) }
