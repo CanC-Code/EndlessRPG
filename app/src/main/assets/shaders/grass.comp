@@ -4,7 +4,7 @@ precision highp float;
 layout(local_size_x = 16, local_size_y = 16) in;
 
 struct Blade { 
-    vec4 pos;  // x (worldX), y (worldY), z (worldZ), w (height scale)
+    vec4 pos;  // x (worldX), y (world elevation), z (worldZ), w (plant scale)
     vec4 wind; // x (windDirX), y (windDirZ), z (rotation angle), w (wind strength)
 };
 
@@ -29,7 +29,6 @@ float noise(vec2 p) {
                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
-// Fractional Brownian Motion: Layers noise to create complex, chaotic currents
 float fbm(vec2 p) {
     float f = 0.0;
     float amp = 0.5;
@@ -39,6 +38,34 @@ float fbm(vec2 p) {
         amp *= 0.5;
     }
     return f;
+}
+
+// ==========================================
+// --- ADVANCED TERRAIN ELEVATION MATH ---
+// ==========================================
+float getElevation(vec2 pos) {
+    // 1. Base Continent Noise (Determines where biomes are)
+    float base = fbm(pos * 0.005);
+    
+    // 2. Mountains: Exponents create sharp peaks and wide, flat valleys
+    float mountains = pow(fbm(pos * 0.015 + vec2(100.0)), 2.5) * 50.0;
+    
+    // 3. Plateaus: Smoothstep creates sudden cliffs and flat tops
+    float plateaus = smoothstep(0.4, 0.6, fbm(pos * 0.02)) * 12.0;
+    
+    // 4. Rolling Hills: Standard smooth noise
+    float hills = fbm(pos * 0.035) * 8.0;
+    
+    // 5. Biome Mask: Seamlessly blend between flatlands/hills and mountainous regions
+    float biomeMask = smoothstep(0.35, 0.65, base);
+    
+    // Combine macro terrain
+    float elevation = mix(plateaus + hills, mountains, biomeMask);
+    
+    // 6. Micro-details (Subtle dirt bumps so flat areas aren't completely artificial)
+    elevation += fbm(pos * 0.3) * 0.4;
+    
+    return elevation;
 }
 
 void main() {
@@ -56,40 +83,28 @@ void main() {
     vec2 jitter = vec2(hash(worldPos * 13.3), hash(worldPos * 17.7)) * spacing * 1.5;
     vec2 finalPos = worldPos + jitter;
     
-    // Terrain Noise
+    // Get the exact terrain height at this blade's location
+    float elevation = getElevation(finalPos);
+    
+    // Plant Growth (Lush in valleys, sparse on steep slopes or high peaks)
     float terrainNoise = noise(finalPos * 0.2);
-    float h = 0.3 + (terrainNoise * 1.2) + (hash(finalPos) * 0.4);
+    float plantScale = 0.3 + (terrainNoise * 1.2) + (hash(finalPos) * 0.4);
     float rot = hash(finalPos * 23.1) * 6.2831853;
     
-    // ==========================================
-    // --- GLOBAL FLUID DYNAMIC WIND PHYSICS ---
-    // ==========================================
-    
-    // 1. Base Wind Vector (Blowing North-East)
+    // Global Fluid Wind
     vec2 baseWindDir = normalize(vec2(1.0, 0.6));
     float windSpeed = 3.5;
-    
-    // 2. Wind Travel Vector (Used to push the noise maps across the world)
     vec2 windScroll = baseWindDir * (u_Time * windSpeed);
     
-    // 3. Macro Gusts (Large, sweeping areas of heavy wind)
-    // We subtract windScroll from finalPos so the noise moves *across* the terrain
     float macroGust = fbm((finalPos - windScroll) * 0.04);
-    
-    // 4. Micro Turbulence (Small, rapid flutter inside the gusts)
     float microTurbulence = fbm((finalPos - windScroll * 1.5) * 0.15);
-    
-    // 5. Calculate final wind strength using smooth boundaries to create distinct "pockets" of wind
     float gustIntensity = smoothstep(0.3, 0.7, macroGust);
     float finalWindStrength = (gustIntensity * 0.8) + (microTurbulence * 0.3);
     
-    // 6. Rolling Ocean Waves (Adds deep, rhythmic pushing pulses to the field)
     float wave = sin(dot(finalPos, baseWindDir) * 0.15 - u_Time * 4.0) * 0.5 + 0.5;
     finalWindStrength *= (0.4 + wave * 0.8);
 
-    // 7. Swirl/Vortices: Perturb the wind direction based on turbulence 
-    // This makes the grass lean around each other chaotically rather than perfectly straight
-    float swirlAngle = (microTurbulence - 0.5) * 1.2; // Angle variation
+    float swirlAngle = (microTurbulence - 0.5) * 1.2; 
     float cosA = cos(swirlAngle);
     float sinA = sin(swirlAngle);
     vec2 finalWindDir = vec2(
@@ -97,7 +112,7 @@ void main() {
         baseWindDir.x * sinA + baseWindDir.y * cosA
     );
 
-    // Write back to GPU memory
-    blades[idx].pos = vec4(finalPos.x, 0.0, finalPos.y, h);
+    // FIXED: The y-coordinate is now the terrain elevation instead of 0.0
+    blades[idx].pos = vec4(finalPos.x, elevation, finalPos.y, plantScale);
     blades[idx].wind = vec4(finalWindDir.x, finalWindDir.y, rot, finalWindStrength); 
 }
