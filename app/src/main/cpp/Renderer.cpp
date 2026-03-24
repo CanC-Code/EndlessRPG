@@ -66,7 +66,7 @@ GLuint GrassRenderer::createComputeProgram(GLuint computeShader) {
 
 // --- Matrix Math Implementation (Optimized for Mobile) ---
 
-void GrassRenderer::buildPerspectiveMatrix(float* m, float fov, float aspect, float zNear, float zFar) {
+void GrassRenderer::buildPerspective(float* m, float fov, float aspect, float zNear, float zFar) {
     float f = 1.0f / tanf(fov / 2.0f);
     for(int i=0; i<16; i++) m[i] = 0.0f;
     m[0] = f / aspect;
@@ -76,7 +76,7 @@ void GrassRenderer::buildPerspectiveMatrix(float* m, float fov, float aspect, fl
     m[14] = (2.0f * zFar * zNear) / (zNear - zFar);
 }
 
-void GrassRenderer::buildLookAtMatrix(float* m, float ex, float ey, float ez, float cx, float cy, float cz) {
+void GrassRenderer::buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz) {
     float fx = cx - ex; float fy = cy - ey; float fz = cz - ez;
     float rlf = 1.0f / sqrtf(fx*fx + fy*fy + fz*fz);
     fx *= rlf; fy *= rlf; fz *= rlf;
@@ -101,7 +101,7 @@ void GrassRenderer::buildLookAtMatrix(float* m, float ex, float ey, float ez, fl
     m[14] += m[2]*-ex + m[6]*-ey + m[10]*-ez;
 }
 
-void GrassRenderer::multiplyMatrix(float* out, const float* a, const float* b) {
+void GrassRenderer::multiply(float* out, const float* a, const float* b) {
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j++) {
             out[j * 4 + i] = a[0 * 4 + i] * b[j * 4 + 0] +
@@ -117,12 +117,10 @@ void GrassRenderer::multiplyMatrix(float* out, const float* a, const float* b) {
 void GrassRenderer::init() {
     LOGI("Initializing Renderer Assets...");
 
-    // 1. Fetch shader sources from APK assets
     std::string compSource = NativeAssetManager::loadShaderText("shaders/grass.comp");
     std::string vertSource = NativeAssetManager::loadShaderText("shaders/grass.vert");
     std::string fragSource = NativeAssetManager::loadShaderText("shaders/grass.frag");
 
-    // 2. Compile and link programs
     GLuint compShader = compileShader(GL_COMPUTE_SHADER, compSource);
     GLuint vertShader = compileShader(GL_VERTEX_SHADER, vertSource);
     GLuint fragShader = compileShader(GL_FRAGMENT_SHADER, fragSource);
@@ -130,13 +128,11 @@ void GrassRenderer::init() {
     computeProgram = createComputeProgram(compShader);
     renderProgram = createProgram(vertShader, fragShader);
 
-    // 3. Initialize Shader Storage Buffer Object (SSBO) for procedural data
     glGenBuffers(1, &ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, GRASS_COUNT * 8 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 
-    // 4. Initialize Base Blade Geometry (A simple triangle)
     float bladeVertices[] = {
         -0.05f, 0.0f, 0.0f,
          0.05f, 0.0f, 0.0f,
@@ -155,43 +151,35 @@ void GrassRenderer::init() {
 }
 
 void GrassRenderer::updateAndRender(float time, float deltaTime, int screenWidth, int screenHeight) {
-    // Safety check for valid dimensions and compiled programs
     if (computeProgram == 0 || renderProgram == 0 || screenWidth <= 0 || screenHeight <= 0) return;
 
-    // --- SETUP VIEWPORT ---
     glViewport(0, 0, screenWidth, screenHeight);
     glClearColor(0.45f, 0.65f, 0.95f, 1.0f); // Photographic sky blue
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
-    // --- COMPUTE PASS: Generate Dynamic Grass Logic ---
+    // --- COMPUTE PASS ---
     glUseProgram(computeProgram);
     glUniform1f(glGetUniformLocation(computeProgram, "u_Time"), time);
     glUniform2f(glGetUniformLocation(computeProgram, "u_WindDirection"), 1.0f, 0.2f);
     glUniform1f(glGetUniformLocation(computeProgram, "u_WindStrength"), 0.4f);
     glUniform3f(glGetUniformLocation(computeProgram, "u_ChunkOffset"), 0.0f, 0.0f, 0.0f);
     
-    // Dispatch in 16x16 work groups to fill the 256x256 grid
     glDispatchCompute(256 / 16, 256 / 16, 1);
-    
-    // Crucial: Synchronize GPU memory so the render pass sees the compute results
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    // --- RENDER PASS: Visual Output ---
+    // --- RENDER PASS ---
     glUseProgram(renderProgram);
 
-    // Dynamic Camera: Positioning to view the procedural landscape
     float aspect = (float)screenWidth / (float)screenHeight;
     float proj[16], view[16], vp[16];
     
-    // Perspective and LookAt (Viewing the grass field from a distance)
-    buildPerspectiveMatrix(proj, 0.785f, aspect, 0.1f, 1000.0f); // 45 degree FOV
-    buildLookAtMatrix(view, 128.0f, 40.0f, -80.0f, 128.0f, 0.0f, 128.0f);
-    multiplyMatrix(vp, proj, view);
+    buildPerspective(proj, 0.785f, aspect, 0.1f, 1000.0f); // 45 degree FOV
+    buildLookAt(view, 128.0f, 40.0f, -80.0f, 128.0f, 0.0f, 128.0f);
+    multiply(vp, proj, view);
 
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
 
-    // Draw using Instanced Rendering (All blades in one call)
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLES, 0, 3, GRASS_COUNT);
 }
