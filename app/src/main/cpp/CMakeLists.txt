@@ -4,8 +4,8 @@ project("procedural_engine")
 add_library(procedural_engine SHARED
     Engine.cpp
     AssetManager.cpp
-    Renderer.cpp
     EGLCore.cpp
+    Renderer.cpp
     RenderLoop.cpp)
 
 find_library(log-lib log)
