@@ -1,4 +1,4 @@
-name: Android CI Build
+name: Android Engine CI Build
 
 on:
   push:
@@ -8,24 +8,50 @@ on:
 
 jobs:
   build:
+    name: Build Android APK
     runs-on: ubuntu-latest
+
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout Repository
+      uses: actions/checkout@v4
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: 'gradle'
 
-    - name: Generate Gradle Wrapper
-      # This uses the runner's pre-installed Gradle to generate gradlew and the wrapper folder.
-      # Gradle 8.7 is highly compatible with modern Android development and C++ NDK builds.
-      run: gradle wrapper --gradle-version 8.7
+    - name: Initialize Gradle Wrapper
+      # The Ubuntu runner contains a system-level Gradle installation.
+      # This step checks for the gradlew executable. If it does not exist,
+      # it generates the wrapper natively, ensuring all checksums and 
+      # properties files are perfectly aligned for the build environment.
+      run: |
+        if [ ! -f "gradlew" ]; then
+          echo "Gradle wrapper not found in repository. Bootstrapping..."
+          gradle wrapper --gradle-version 8.6 --distribution-type all
+        else
+          echo "Gradle wrapper exists."
+        fi
+        # Ensure the script has execution permissions
+        chmod +x gradlew
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+    - name: Setup Gradle Cache & Environment
+      # This official action intercepts the Gradle execution to cache dependencies,
+      # Android SDK components, and the NDK build outputs. 
+      uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: wrapper
 
-    - name: Build with Gradle (Includes NDK C++ build)
-      run: ./gradlew assembleDebug
+    - name: Compile Procedural Engine & Build APK
+      # Executes the assembly. This triggers CMake to compile Engine.cpp, 
+      # Renderer.cpp, etc., before packaging them into the final Android application.
+      run: ./gradlew assembleDebug --stacktrace
+
+    - name: Upload APK Artifact
+      # Captures the successfully compiled application and attaches it to the workflow run.
+      uses: actions/upload-artifact@v4
+      with:
+        name: ProceduralEngine-Debug-APK
+        path: app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 7
