@@ -8,6 +8,10 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
+// --- Lifecycle Initialization ---
+
+GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), ssbo(0), vao(0), vbo(0) {}
+
 // --- Shader Compilation Utility Functions ---
 
 GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
@@ -112,7 +116,7 @@ void GrassRenderer::multiply(float* out, const float* a, const float* b) {
     }
 }
 
-// --- Lifecycle & High-Performance Rendering Loop ---
+// --- High-Performance Rendering Loop ---
 
 void GrassRenderer::init() {
     LOGI("Initializing Renderer Assets...");
