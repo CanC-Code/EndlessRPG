@@ -7,42 +7,74 @@ import android.os.Bundle
 /**
  * MainActivity serves as the lifecycle bridge between the Android OS 
  * and our high-performance C++ procedural engine.
+ * * It coordinates the initialization of the Job System (logic), 
+ * the Asset Manager (blueprints), and the GameSurfaceView (visuals).
  */
 class MainActivity : AppCompatActivity() {
 
-    // Load the 'procedural_engine' shared library on app startup
+    // Load the 'procedural_engine' shared library on app startup.
+    // This allows the Android OS to link our C++ logic to this Kotlin class.
     init {
         System.loadLibrary("procedural_engine")
     }
 
     // --- Native C++ Function Declarations ---
-    
-    // Links the Android Asset system to C++ (Critical for loading shaders)
+
+    /**
+     * Links the Android Asset system to C++.
+     * This is vital for the engine to read the .comp (Compute Shaders)
+     * required for photorealistic grass generation.
+     */
     private external fun initAssetManager(assetManager: AssetManager)
-    
-    // Boots the Job System and starts the 30 computational processes
+
+    /**
+     * Boots the multithreaded Job System.
+     * This initiates the 30 background computational processes to handle
+     * world logic and growth patterns without causing frame-lag.
+     */
     private external fun initEngine()
-    
-    // Safely tears down threads and releases GPU memory
+
+    /**
+     * Safely tears down the engine's worker threads and releases 
+     * GPU/Memory resources when the app is closed.
+     */
     private external fun shutdownEngine()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 1. Initialize the Asset Bridge FIRST so the engine can load its "logic"
+        // 1. Initialize the Visual Surface.
+        // GameSurfaceView handles its own native EGL connection internally
+        // to render the procedural grass at high refresh rates.
+        val gameView = GameSurfaceView(this)
+        setContentView(gameView)
+
+        // 2. Initialize the Asset Bridge.
+        // We do this before initEngine so the workers can access asset-based logic.
         initAssetManager(assets)
 
-        // 2. Initialize the Engine and the multi-threaded Job System
+        // 3. Boot the Engine.
+        // This launches the 30 threads into the hardware-optimized Job System.
         initEngine()
-        
-        // Note: For the visual component, we will later add:
-        // setContentView(GameSurfaceView(this))
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // In a high-performance engine, you may want to signal the Job System
+        // to throttle down here to save battery.
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Signal the Job System to resume full-speed logic processing.
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        
-        // Ensure all 30 processes are stopped and threads joined to avoid ghost memory leaks
+
+        // 4. Critical Cleanup.
+        // Halts the 30 computational processes and joins threads to prevent
+        // memory leaks or app-not-responding (ANR) errors on shutdown.
         shutdownEngine()
     }
 }
