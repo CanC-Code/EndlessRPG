@@ -2,7 +2,7 @@
 #include <GLES3/gl31.h>
 #include <string>
 
-// 512 * 512 instances for a dense field
+// 512 * 512 = 262,144 blades for a high-density field like the photo
 const int GRASS_COUNT = 262144; 
 
 class GrassRenderer {
@@ -15,8 +15,7 @@ private:
     GLuint computeProgram;
     GLuint renderProgram;
     GLuint ssbo;
-    GLuint vao;
-    GLuint vbo;
+    GLuint vao, vbo;
 
     GLuint compileShader(GLenum type, const std::string& source);
     GLuint createProgram(GLuint vertexShader, GLuint fragmentShader);
