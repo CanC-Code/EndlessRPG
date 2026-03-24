@@ -24,7 +24,7 @@ GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
     const char* src = source.c_str();
     glShaderSource(shader, 1, &src, nullptr);
     glCompileShader(shader);
-    
+
     GLint success;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
     if (!success) {
@@ -49,6 +49,8 @@ GLuint GrassRenderer::createProgram(GLuint vertexShader, GLuint fragmentShader) 
         char infoLog[512];
         glGetProgramInfoLog(program, 512, nullptr, infoLog);
         LOGE("Render Program Link Error: %s", infoLog);
+        glDeleteProgram(program);
+        return 0; // Fixed: Safely abort and return 0
     }
     return program;
 }
@@ -64,6 +66,8 @@ GLuint GrassRenderer::createComputeProgram(GLuint computeShader) {
         char infoLog[512];
         glGetProgramInfoLog(program, 512, nullptr, infoLog);
         LOGE("Compute Program Link Error: %s", infoLog);
+        glDeleteProgram(program);
+        return 0; // Fixed: Safely abort and return 0
     }
     return program;
 }
@@ -81,7 +85,9 @@ void GrassRenderer::buildPerspective(float* m, float fov, float aspect, float zN
 }
 
 void GrassRenderer::buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz) {
-    float fx = cx - ex; float fy = cy - ey; float fz = cz - ez;
+    float fx = cx - ex;
+    float fy = cy - ey; float fz = cz - ez;
+    
     float rlf = 1.0f / sqrtf(fx*fx + fy*fy + fz*fz);
     fx *= rlf; fy *= rlf; fz *= rlf;
     
@@ -94,7 +100,7 @@ void GrassRenderer::buildLookAt(float* m, float ex, float ey, float ez, float cx
     float ux = sy * fz - sz * fy;
     float uy = sz * fx - sx * fz;
     float uz = sx * fy - sy * fx;
-
+    
     m[0] = sx; m[4] = ux; m[8]  = -fx; m[12] = 0.0f;
     m[1] = sy; m[5] = uy; m[9]  = -fy; m[13] = 0.0f;
     m[2] = sz; m[6] = uz; m[10] = -fz; m[14] = 0.0f;
@@ -120,7 +126,7 @@ void GrassRenderer::multiply(float* out, const float* a, const float* b) {
 
 void GrassRenderer::init() {
     LOGI("Initializing Renderer Assets...");
-
+    
     std::string compSource = NativeAssetManager::loadShaderText("shaders/grass.comp");
     std::string vertSource = NativeAssetManager::loadShaderText("shaders/grass.vert");
     std::string fragSource = NativeAssetManager::loadShaderText("shaders/grass.frag");
@@ -136,7 +142,7 @@ void GrassRenderer::init() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, GRASS_COUNT * 8 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
-
+    
     float bladeVertices[] = {
         -0.05f, 0.0f, 0.0f,
          0.05f, 0.0f, 0.0f,
@@ -150,18 +156,18 @@ void GrassRenderer::init() {
     glBufferData(GL_ARRAY_BUFFER, sizeof(bladeVertices), bladeVertices, GL_STATIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-
+    
     LOGI("Renderer initialized with %d blades of grass.", GRASS_COUNT);
 }
 
 void GrassRenderer::updateAndRender(float time, float deltaTime, int screenWidth, int screenHeight) {
     if (computeProgram == 0 || renderProgram == 0 || screenWidth <= 0 || screenHeight <= 0) return;
-
+    
     glViewport(0, 0, screenWidth, screenHeight);
     glClearColor(0.45f, 0.65f, 0.95f, 1.0f); // Photographic sky blue
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
-
+    
     // --- COMPUTE PASS ---
     glUseProgram(computeProgram);
     glUniform1f(glGetUniformLocation(computeProgram, "u_Time"), time);
@@ -171,7 +177,7 @@ void GrassRenderer::updateAndRender(float time, float deltaTime, int screenWidth
     
     glDispatchCompute(256 / 16, 256 / 16, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
+    
     // --- RENDER PASS ---
     glUseProgram(renderProgram);
 
@@ -180,6 +186,7 @@ void GrassRenderer::updateAndRender(float time, float deltaTime, int screenWidth
     
     buildPerspective(proj, 0.785f, aspect, 0.1f, 1000.0f); // 45 degree FOV
     buildLookAt(view, 128.0f, 40.0f, -80.0f, 128.0f, 0.0f, 128.0f);
+    
     multiply(vp, proj, view);
 
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
