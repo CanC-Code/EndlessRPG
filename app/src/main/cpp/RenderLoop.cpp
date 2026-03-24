@@ -1,13 +1,18 @@
 #include "RenderLoop.h"
+#include <android/log.h>
 #include <chrono>
 
-RenderLoop::RenderLoop(EGLCore* egl, GrassRenderer* renderer) 
+#define LOG_TAG "RenderLoop"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+RenderLoop::RenderLoop(EGLCore* egl, GrassRenderer* renderer)
     : eglCore(egl), grassRenderer(renderer), isRunning(false), activeWindow(nullptr) {}
 
 RenderLoop::~RenderLoop() { stop(); }
 
 void RenderLoop::start() {
-    isRunning = true;
+    isRunning    = true;
     renderThread = std::thread(&RenderLoop::run, this);
 }
 
@@ -17,48 +22,62 @@ void RenderLoop::stop() {
     if (renderThread.joinable()) renderThread.join();
 }
 
+// Called from the main thread after start() to hand the window to the render thread.
 void RenderLoop::setWindow(ANativeWindow* window) {
-    std::lock_guard<std::mutex> lock(loopMutex);
-    activeWindow = window;
+    {
+        std::lock_guard<std::mutex> lock(loopMutex);
+        activeWindow = window;
+    }
     condVar.notify_all();
 }
 
 void RenderLoop::run() {
+    // -----------------------------------------------------------------------
+    // Phase 1 — wait for a valid ANativeWindow.
+    // -----------------------------------------------------------------------
+    {
+        std::unique_lock<std::mutex> lock(loopMutex);
+        condVar.wait(lock, [this] { return activeWindow != nullptr || !isRunning; });
+    }
+
+    if (!isRunning) return;
+
+    ANativeWindow* window = activeWindow; // captured once; window won't change
+
+    // -----------------------------------------------------------------------
+    // Phase 2 — initialise EGL on THIS thread (required by the OpenGL spec).
+    // eglCore->init() is called exactly once here, not every frame.
+    // -----------------------------------------------------------------------
+    if (!eglCore->init(window)) {
+        LOGE("EGL init failed — render loop aborting.");
+        return;
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 3 — init the renderer (needs an active GL context, hence on this thread).
+    // -----------------------------------------------------------------------
+    grassRenderer->init();
+
+    // -----------------------------------------------------------------------
+    // Phase 4 — main render loop.
+    // -----------------------------------------------------------------------
     auto startTime = std::chrono::high_resolution_clock::now();
     auto lastFrame = startTime;
 
     while (isRunning) {
-        ANativeWindow* currentWindow = nullptr;
-        {
-            std::unique_lock<std::mutex> lock(loopMutex);
-            if (!activeWindow) {
-                // If there's no window, safely wait instead of failing or turning black
-                condVar.wait(lock, [this] { return activeWindow != nullptr || !isRunning; });
-            }
-            currentWindow = activeWindow;
-        }
-
-        if (!isRunning) break;
-
-        // Initialize EGL Surface if we have a window but no context
-        if (currentWindow && !eglCore->init(currentWindow)) {
-            continue; // Retry next cycle
-        }
-
-        // Calculate Time and DeltaTime
         auto now = std::chrono::high_resolution_clock::now();
         float time = std::chrono::duration<float>(now - startTime).count();
-        float dt = std::chrono::duration<float>(now - lastFrame).count();
-        lastFrame = now;
+        float dt   = std::chrono::duration<float>(now - lastFrame).count();
+        lastFrame  = now;
 
-        // Force minimum safe screen dimensions
         int w = eglCore->getWidth();
         int h = eglCore->getHeight();
-        if (w <= 0) w = 1920; 
+        if (w <= 0) w = 1920;
         if (h <= 0) h = 1080;
 
-        // Draw and Swap
         grassRenderer->updateAndRender(time, dt, w, h);
         eglCore->swapBuffers();
     }
+
+    LOGI("Render thread exiting cleanly.");
 }
