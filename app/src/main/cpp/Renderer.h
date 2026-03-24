@@ -4,26 +4,19 @@
 
 class GrassRenderer {
 private:
-    GLuint computeProgram;
-    GLuint renderProgram;
-    GLuint ssbo;
-    GLuint vao, vbo;
-    
+    GLuint computeProgram, renderProgram, ssbo, vao, vbo;
     const int GRASS_COUNT = 256 * 256; 
 
-    // Internal helpers for shader compilation and matrix math
     GLuint compileShader(GLenum type, const std::string& source);
-    GLuint createProgram(GLuint vertexShader, GLuint fragmentShader);
-    GLuint createComputeProgram(GLuint computeShader);
+    GLuint createProgram(GLuint v, GLuint f);
+    GLuint createComputeProgram(GLuint c);
     
-    void buildPerspectiveMatrix(float* m, float fov, float aspect, float zNear, float zFar);
-    void buildLookAtMatrix(float* m, float ex, float ey, float ez, float cx, float cy, float cz);
-    void multiplyMatrix(float* out, const float* a, const float* b);
+    void buildPerspective(float* m, float fov, float aspect, float zn, float zf);
+    void buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz);
+    void multiply(float* out, const float* a, const float* b);
 
 public:
-    GrassRenderer() : computeProgram(0), renderProgram(0), ssbo(0), vao(0), vbo(0) {}
-    ~GrassRenderer() = default;
-
+    GrassRenderer();
     void init();
-    void updateAndRender(float time, float deltaTime, int screenWidth, int screenHeight);
+    void updateAndRender(float time, float dt, int w, int h);
 };
