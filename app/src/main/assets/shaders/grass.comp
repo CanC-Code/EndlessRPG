@@ -3,9 +3,8 @@ precision highp float;
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
-// Memory layout aligned with C++ SSBO
 struct Blade { 
-    vec4 pos;  // x (worldX), y (worldY - always 0), z (worldZ), w (height scale)
+    vec4 pos;  // x (worldX), y (worldY), z (worldZ), w (height scale)
     vec4 wind; // x (windDirX), y (windDirZ), z (rotation angle), w (wind strength)
 };
 
@@ -16,14 +15,12 @@ layout(std430, binding = 0) buffer B {
 uniform float u_Time;
 uniform vec3 u_CameraPos;
 
-// Bulletproof deterministic hash based on absolute coordinates
 float hash(vec2 p) { 
     vec2 p2 = fract(p * vec2(5.3983, 5.4427));
     p2 += dot(p2.yx, p2.xy + vec2(21.5351, 14.3137));
     return fract(p2.x * p2.y * 95.4337);
 }
 
-// 2D Noise for natural terrain clumping (determines lush vs sparse areas)
 float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -32,44 +29,75 @@ float noise(vec2 p) {
                mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
+// Fractional Brownian Motion: Layers noise to create complex, chaotic currents
+float fbm(vec2 p) {
+    float f = 0.0;
+    float amp = 0.5;
+    for(int i = 0; i < 3; i++) {
+        f += amp * noise(p);
+        p *= 2.0;
+        amp *= 0.5;
+    }
+    return f;
+}
+
 void main() {
     uint x = gl_GlobalInvocationID.x;
     uint y = gl_GlobalInvocationID.y;
     uint idx = y * 512u + x; 
     
-    // Grid density
     float spacing = 0.08; 
     float gridSize = 512.0 * spacing;
     
-    // --- DETERMINISTIC CHUNKING ---
-    // Safely snap the grid to the camera to create an endless rolling world.
-    // By rounding the camera position to the nearest spacing interval, 
-    // the blades remain mathematically anchored to the world space.
     vec2 camGridCenter = floor(u_CameraPos.xz / spacing) * spacing;
-    
     vec2 localPos = vec2(float(x), float(y)) * spacing - (gridSize * 0.5);
     vec2 worldPos = camGridCenter + localPos;
     
-    // --- ORGANIC PLACEMENT ---
-    // Jitter breaks the perfect computer grid. It is calculated using the 
-    // absolute worldPos so it never changes if you leave and come back.
     vec2 jitter = vec2(hash(worldPos * 13.3), hash(worldPos * 17.7)) * spacing * 1.5;
     vec2 finalPos = worldPos + jitter;
     
-    // Terrain noise creates sweeping patches of tall grass and dips of shorter grass
+    // Terrain Noise
     float terrainNoise = noise(finalPos * 0.2);
     float h = 0.3 + (terrainNoise * 1.2) + (hash(finalPos) * 0.4);
-    
-    // Calculate a random Y-axis rotation for photographic density (0 to 2*PI)
     float rot = hash(finalPos * 23.1) * 6.2831853;
     
-    // --- DYNAMIC WIND ---
-    // Wind is the ONLY element that uses u_Time.
-    vec2 windDir = normalize(vec2(1.0, 1.0));
-    float windParam = u_Time * 1.5 + finalPos.x * 0.2 + finalPos.y * 0.2;
-    float w = (sin(windParam) + cos(windParam * 0.7)) * 0.4;
+    // ==========================================
+    // --- GLOBAL FLUID DYNAMIC WIND PHYSICS ---
+    // ==========================================
+    
+    // 1. Base Wind Vector (Blowing North-East)
+    vec2 baseWindDir = normalize(vec2(1.0, 0.6));
+    float windSpeed = 3.5;
+    
+    // 2. Wind Travel Vector (Used to push the noise maps across the world)
+    vec2 windScroll = baseWindDir * (u_Time * windSpeed);
+    
+    // 3. Macro Gusts (Large, sweeping areas of heavy wind)
+    // We subtract windScroll from finalPos so the noise moves *across* the terrain
+    float macroGust = fbm((finalPos - windScroll) * 0.04);
+    
+    // 4. Micro Turbulence (Small, rapid flutter inside the gusts)
+    float microTurbulence = fbm((finalPos - windScroll * 1.5) * 0.15);
+    
+    // 5. Calculate final wind strength using smooth boundaries to create distinct "pockets" of wind
+    float gustIntensity = smoothstep(0.3, 0.7, macroGust);
+    float finalWindStrength = (gustIntensity * 0.8) + (microTurbulence * 0.3);
+    
+    // 6. Rolling Ocean Waves (Adds deep, rhythmic pushing pulses to the field)
+    float wave = sin(dot(finalPos, baseWindDir) * 0.15 - u_Time * 4.0) * 0.5 + 0.5;
+    finalWindStrength *= (0.4 + wave * 0.8);
 
-    // Pack data into the SSBO for the Vertex Shader
+    // 7. Swirl/Vortices: Perturb the wind direction based on turbulence 
+    // This makes the grass lean around each other chaotically rather than perfectly straight
+    float swirlAngle = (microTurbulence - 0.5) * 1.2; // Angle variation
+    float cosA = cos(swirlAngle);
+    float sinA = sin(swirlAngle);
+    vec2 finalWindDir = vec2(
+        baseWindDir.x * cosA - baseWindDir.y * sinA,
+        baseWindDir.x * sinA + baseWindDir.y * cosA
+    );
+
+    // Write back to GPU memory
     blades[idx].pos = vec4(finalPos.x, 0.0, finalPos.y, h);
-    blades[idx].wind = vec4(windDir.x, windDir.y, rot, w); 
+    blades[idx].wind = vec4(finalWindDir.x, finalWindDir.y, rot, finalWindStrength); 
 }
