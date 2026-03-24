@@ -1,8 +1,10 @@
 #pragma once
-#include <thread>
-#include <atomic>
 #include "EGLCore.h"
 #include "Renderer.h"
+#include <atomic>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 class RenderLoop {
 public:
@@ -11,12 +13,17 @@ public:
 
     void start();
     void stop();
+    void setWindow(ANativeWindow* window);
 
 private:
     void run();
 
     EGLCore* eglCore;
     GrassRenderer* grassRenderer;
-    std::thread loopThread;
-    std::atomic<bool> running;
+    
+    std::thread renderThread;
+    std::atomic<bool> isRunning;
+    std::mutex loopMutex;
+    std::condition_variable condVar;
+    ANativeWindow* activeWindow;
 };
