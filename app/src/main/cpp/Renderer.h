@@ -11,9 +11,16 @@ public:
     void init();
     void updateAndRender(float time, float deltaTime, int screenWidth, int screenHeight);
     
-    void updateInput(float mx, float my, float lx, float ly);
+    // UPDATED SIGNATURE: Supports view switching and pinch-to-zoom
+    void updateInput(float mx, float my, float lx, float ly, bool isThirdPerson, float zoom);
 
-    // Camera State
+    // --- NEW: Separated Player Position ---
+    // This is where the actual "character" is standing in the world
+    float playerX = 0.0f;
+    float playerY = 0.0f;
+    float playerZ = 0.0f;
+
+    // Camera Position (Derived from player position + zoom orbit)
     float camX = 0.0f;
     float camY = 1.8f;
     float camZ = 0.0f;
@@ -21,8 +28,11 @@ public:
     float camYaw = -90.0f; 
     float camPitch = 0.0f;
     
+    // Global Engine State
     float moveX = 0.0f;
     float moveY = 0.0f;
+    bool isThirdPerson = false;
+    float cameraZoom = 5.0f;
 
 private:
     // OpenGL Handles for Grass
@@ -45,7 +55,7 @@ private:
     void buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz);
     void multiply(float* out, const float* a, const float* b);
 
-    // CPU Terrain Math (To make the camera walk on the hills)
+    // CPU Terrain Math (To make the camera/player walk on the hills)
     float fract(float x);
     float hash(float px, float py);
     float mix(float x, float y, float a);
