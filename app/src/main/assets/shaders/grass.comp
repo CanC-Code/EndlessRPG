@@ -13,10 +13,17 @@ layout(std430, binding = 0) buffer B {
 };
 
 uniform float u_Time;
-uniform vec3 u_CameraPos; // Drives the infinite world generation
+uniform vec3 u_CameraPos; 
 
-// Basic pseudo-random hash
+// Safely wrap coordinates to prevent mobile GPU floating-point precision loss
+vec2 safeMod(vec2 p, float m) {
+    return mod(p, m);
+}
+
+// Deterministic random hash
 float hash(vec2 p) { 
+    // Wrap at a large safe boundary (e.g., 1000 units) to keep precision high
+    p = safeMod(p, 1000.0);
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); 
 }
 
@@ -34,35 +41,38 @@ void main() {
     uint y = gl_GlobalInvocationID.y;
     uint idx = y * 512u + x; 
     
-    // Tighter spacing pushes the blades closer together for a denser canopy
     float spacing = 0.08; 
     float gridSize = 512.0 * spacing;
     
-    // Snap the grid to the camera's position to create an endless rolling world
+    // Grid snapping for endless scrolling
     vec2 camGrid = floor(u_CameraPos.xz / spacing) * spacing;
     vec2 localPos = vec2(float(x), float(y)) * spacing - (gridSize * 0.5);
     vec2 worldPos = camGrid + localPos;
     
-    // Aggressive jitter to destroy the artificial grid alignment
+    // Apply jitter to make the placement organic
     vec2 jitter = vec2(hash(worldPos * 13.3), hash(worldPos * 17.7)) * spacing * 1.5;
     worldPos += jitter;
     
-    // Organic clumping: terrain noise dictates where grass grows tall vs short
+    // Deterministic organic clumping based on fixed world position
     float terrainNoise = noise(worldPos * 0.3);
-    
-    // Combine base height + noise patches + individual random blade variation
     float h = 0.2 + (terrainNoise * 0.9) + (hash(worldPos) * 0.3);
     
-    // Wind mechanics: Overlapping turbulent waves
-    // Wave 1 moves diagonally
-    float windWave1 = sin(u_Time * 1.5 + worldPos.x * 0.2 + worldPos.y * 0.2);
-    // Wave 2 moves faster and in a contrasting direction
-    float windWave2 = cos(u_Time * 2.2 - worldPos.x * 0.5 + worldPos.y * 0.3);
+    // Calculate a random 360-degree rotation (yaw) for each blade
+    // 6.2831853 is 2 * PI in radians
+    float yaw = hash(worldPos * 42.1) * 6.2831853;
     
-    // Combine the waves for a chaotic flutter effect
+    // Wrap time to prevent wind animation from breaking after a few minutes
+    float safeTime = safeMod(u_Time, 1000.0);
+    
+    // Complex overlapping wind waves
+    float windWave1 = sin(safeTime * 1.5 + worldPos.x * 0.2 + worldPos.y * 0.2);
+    float windWave2 = cos(safeTime * 2.2 - worldPos.x * 0.5 + worldPos.y * 0.3);
     float w = (windWave1 + windWave2) * 0.35;
 
-    // Output back to the SSBO for the Vertex Shader
+    // Output to SSBO
     blades[idx].pos = vec4(worldPos.x, 0.0, worldPos.y, h);
-    blades[idx].wind = vec4(1.0, 0.0, 1.0, w); 
+    
+    // We store X/Z as wind direction, Y as our new Yaw rotation, and W as wind strength
+    // This perfectly preserves compatibility with our current Vertex Shader!
+    blades[idx].wind = vec4(1.0, yaw, 1.0, w); 
 }
