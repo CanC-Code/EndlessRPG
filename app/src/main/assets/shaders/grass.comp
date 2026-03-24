@@ -13,8 +13,8 @@ layout(std430, binding = 0) buffer B {
 };
 
 uniform float u_Time;
+uniform vec3 u_CameraPos; // Drives the infinite world generation
 
-// Procedural random hash
 float hash(vec2 p) { 
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); 
 }
@@ -22,23 +22,25 @@ float hash(vec2 p) {
 void main() {
     uint x = gl_GlobalInvocationID.x;
     uint y = gl_GlobalInvocationID.y;
-    // Assuming a 512x512 grid
     uint idx = y * 512u + x; 
     
-    // Spread the 512x512 grid over a 50x50 world area
-    vec2 gridPos = vec2(float(x), float(y)) / 512.0 * 50.0 - 25.0;
+    float spacing = 0.15; // Distance between blades
+    float gridSize = 512.0 * spacing;
     
-    // Add jitter so it doesn't look like a perfect grid
-    vec2 jitter = vec2(hash(gridPos), hash(gridPos + 1.0)) * 0.15;
-    vec2 worldPos = gridPos + jitter;
+    // Snap the grid to the camera's position to create an endless rolling world
+    vec2 camGrid = floor(u_CameraPos.xz / spacing) * spacing;
+    vec2 localPos = vec2(float(x), float(y)) * spacing - (gridSize * 0.5);
+    vec2 worldPos = camGrid + localPos;
     
-    // Random height variations (0.6 to 1.1)
-    float h = 0.6 + hash(worldPos) * 0.5;
+    // Natural jitter so it doesn't look like a synthetic grid
+    vec2 jitter = vec2(hash(worldPos), hash(worldPos + 1.0)) * (spacing * 0.8);
+    worldPos += jitter;
     
-    // Wind noise based on time and position
-    float windParam = u_Time * 2.0 + worldPos.x * 0.5 + worldPos.y * 0.5;
-    float w = (sin(windParam) + sin(windParam * 0.5)) * 0.4;
+    // Procedural height and wind mechanics
+    float h = 0.5 + hash(worldPos * 2.0) * 0.7;
+    float windParam = u_Time * 1.5 + worldPos.x * 0.2 + worldPos.y * 0.2;
+    float w = (sin(windParam) + sin(windParam * 0.5)) * 0.5;
     
     blades[idx].pos = vec4(worldPos.x, 0.0, worldPos.y, h);
-    blades[idx].wind = vec4(1.0, 0.0, 1.0, w); // x, z wind direction; w is strength
+    blades[idx].wind = vec4(1.0, 0.0, 1.0, w); 
 }
