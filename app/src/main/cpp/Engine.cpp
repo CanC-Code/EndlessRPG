@@ -3,6 +3,7 @@
 #include "EGLCore.h"
 #include "Renderer.h"
 #include "RenderLoop.h"
+#include "AssetManager.h" // FIXED: Added missing include for AssetManager
 
 EGLCore* eglCore = nullptr;
 GrassRenderer* renderer = nullptr;
