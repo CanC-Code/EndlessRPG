@@ -1,18 +1,19 @@
 #include <jni.h>
 #include <android/native_window_jni.h>
-#include <android/asset_manager_jni.h> // REQUIRED for AAssetManager_fromJava
+#include <android/asset_manager_jni.h> 
 #include "EGLCore.h"
 #include "Renderer.h"
 #include "RenderLoop.h"
 #include "AssetManager.h"
 
+// Global engine components
 EGLCore* eglCore = nullptr;
 GrassRenderer* renderer = nullptr;
 RenderLoop* renderLoop = nullptr;
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_game_MainActivity_initAssetManager(JNIEnv* env, jobject thiz, jobject assetManager) {
-    // FIXED: Convert the Java jobject to a native AAssetManager* first
+    // Convert the Java jobject to a native AAssetManager* for the C++ side
     AAssetManager* nativeManager = AAssetManager_fromJava(env, assetManager);
     NativeAssetManager::init(nativeManager); 
 }
@@ -41,7 +42,7 @@ Java_com_example_game_GameSurfaceView_onSurfaceCreated(JNIEnv* env, jobject thiz
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_game_GameSurfaceView_onSurfaceChanged(JNIEnv* env, jobject thiz, jint width, jint height) {
-    // Handled by RenderLoop querying EGL dimensions
+    // Window resizing is handled automatically by the RenderLoop
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -49,10 +50,16 @@ Java_com_example_game_GameSurfaceView_releaseNativeSurface(JNIEnv* env, jobject 
     if (renderLoop) renderLoop->setWindow(nullptr);
 }
 
-// --- NEW INPUT BRIDGE ---
+// --- UPDATED INPUT BRIDGE ---
+// This function now accepts the view mode and zoom level
 extern "C" JNIEXPORT void JNICALL
-Java_com_example_game_GameSurfaceView_updateInput(JNIEnv* env, jobject thiz, jfloat moveX, jfloat moveY, jfloat lookDX, jfloat lookDY) {
+Java_com_example_game_GameSurfaceView_updateInput(JNIEnv* env, jobject thiz, 
+                                                jfloat moveX, jfloat moveY, 
+                                                jfloat lookDX, jfloat lookDY, 
+                                                jboolean isThirdPerson, 
+                                                jfloat zoom) {
     if (renderer) {
-        renderer->updateInput(moveX, moveY, lookDX, lookDY);
+        // Pass the new camera states into the renderer's update logic
+        renderer->updateInput(moveX, moveY, lookDX, lookDY, (bool)isThirdPerson, zoom);
     }
 }
