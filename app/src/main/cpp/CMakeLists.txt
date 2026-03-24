@@ -1,10 +1,7 @@
 cmake_minimum_required(VERSION 3.22.1)
-
-# Define the name of the project
 project("procedural_engine")
 
-# Define the shared library and all C++ source files
-# Ensure Character.cpp is included here
+# 1. Source files - Ensure Character.cpp is listed!
 add_library(procedural_engine SHARED
     Engine.cpp
     EGLCore.cpp
@@ -14,13 +11,12 @@ add_library(procedural_engine SHARED
     Character.cpp
 )
 
-# Link the necessary Android and OpenGL libraries
-# This list must be clean of any extra brackets or parentheses
+# 2. Libraries - Clean and explicit linking
 target_link_libraries(procedural_engine
     android
-    EGL
-    GLESv3
-    log
+    EGL       # REQUIRED for eglSwapBuffers/eglMakeCurrent
+    GLESv3    # For OpenGL ES 3.1
+    log       # For debugging
     atomic
-    m
+    m         # Math library
 )
