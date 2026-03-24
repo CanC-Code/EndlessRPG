@@ -1,41 +1,44 @@
 #version 310 es
 precision highp float;
 
-// Base geometry of a single blade (passed via VBO)
-layout(location = 0) in vec3 a_Position; 
+layout(location = 0) in vec3 a_Pos;
 
-// SSBO containing the logic from the compute shader
-struct GrassBlade {
-    vec4 position_and_height;
-    vec4 tilt_and_wind;
+struct Blade { 
+    vec4 pos; 
+    vec4 wind; 
 };
-layout(std430, binding = 0) buffer GrassBuffer {
-    GrassBlade blades[];
+
+layout(std430, binding = 0) buffer B { 
+    Blade blades[]; 
 };
 
 uniform mat4 u_ViewProjection;
-
-out vec2 v_UV;
-out float v_HeightData;
+out float v_Height;
 
 void main() {
-    // gl_InstanceID tells us which specific blade we are currently drawing
-    GrassBlade thisBlade = blades[gl_InstanceID];
+    Blade b = blades[gl_InstanceID];
+    vec3 bladePos = b.pos.xyz;
+    float bladeHeight = b.pos.w;
     
-    vec3 localPos = a_Position;
+    // Normalize wind direction and get wind strength
+    vec2 windDir = normalize(b.wind.xz);
+    float windStrength = b.wind.w;
+
+    vec3 pos = a_Pos;
     
-    // Scale the blade by its growth height
-    localPos.y *= thisBlade.position_and_height.w;
+    // Scale the raw blade height by the procedural height
+    pos.y *= bladeHeight;
     
-    // Apply wind bending (more bend at the top of the blade)
-    float heightFactor = clamp(a_Position.y, 0.0, 1.0);
-    vec3 windOffset = vec3(thisBlade.tilt_and_wind.x, 0.0, thisBlade.tilt_and_wind.z) * thisBlade.tilt_and_wind.w * heightFactor * heightFactor;
+    // Quadratic wind bending so the root stays still and the tip bends
+    float bendFactor = (a_Pos.y * a_Pos.y) * windStrength;
+    pos.x += windDir.x * bendFactor;
+    pos.z += windDir.y * bendFactor;
+
+    // Shift the local blade to its world position
+    vec3 worldPos = pos + bladePos;
+
+    // Pass the unscaled Y (0.0 to 1.0) to the fragment shader for coloring
+    v_Height = a_Pos.y; 
     
-    vec3 finalWorldPos = thisBlade.position_and_height.xyz + localPos + windOffset;
-    
-    gl_Position = u_ViewProjection * vec4(finalWorldPos, 1.0);
-    
-    // Pass data to the fragment shader for coloring
-    v_UV = vec2(a_Position.x + 0.5, a_Position.y); 
-    v_HeightData = heightFactor;
+    gl_Position = u_ViewProjection * vec4(worldPos, 1.0);
 }
