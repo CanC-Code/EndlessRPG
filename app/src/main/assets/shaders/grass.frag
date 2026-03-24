@@ -5,10 +5,8 @@ in float v_Height;
 out vec4 FragColor;
 
 void main() {
-    vec3 colorBottom = vec3(0.05, 0.20, 0.05); // Dark, shaded roots
-    vec3 colorTop    = vec3(0.35, 0.65, 0.15); // Sunlit tips
-    
-    vec3 finalColor = mix(colorBottom, colorTop, v_Height);
-    
+    vec3 colorRoot = vec3(0.02, 0.15, 0.02);
+    vec3 colorTip  = vec3(0.40, 0.70, 0.15);
+    vec3 finalColor = mix(colorRoot, colorTip, v_Height * v_Height); // Non-linear gradient
     FragColor = vec4(finalColor, 1.0);
 }
