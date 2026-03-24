@@ -1,46 +1,14 @@
 #version 310 es
 layout(local_size_x = 16, local_size_y = 16) in;
-
-// Struct to hold individual blade data
-struct GrassBlade {
-    vec4 position_and_height; // xyz = position, w = growth height
-    vec4 tilt_and_wind;       // xyz = tilt normal, w = wind bend amount
-};
-
-// SSBO: The GPU writes directly into this buffer
-layout(std430, binding = 0) buffer GrassBuffer {
-    GrassBlade blades[];
-};
-
-// Uniforms passed from the CPU
+struct Blade { vec4 pos; vec4 wind; };
+layout(std430, binding = 0) buffer B { Blade blades[]; };
 uniform float u_Time;
-uniform vec2 u_WindDirection;
-uniform float u_WindStrength;
-uniform vec3 u_ChunkOffset; // Where this patch of terrain is in the world
-
-// Pseudo-random hash function for natural distribution
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-}
-
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 void main() {
-    // 1D index for the SSBO array
-    uint index = gl_GlobalInvocationID.y * gl_NumWorkGroups.x * gl_WorkGroupSize.x + gl_GlobalInvocationID.x;
-    
-    // Grid coordinate for this specific blade
-    vec2 gridPos = vec2(gl_GlobalInvocationID.xy);
-    
-    // Add noise so the grass doesn't look like a perfect grid
-    vec2 naturalOffset = vec2(hash(gridPos), hash(gridPos + 1.0)) * 0.8;
-    vec3 worldPos = u_ChunkOffset + vec3(gridPos.x + naturalOffset.x, 0.0, gridPos.y + naturalOffset.y);
-    
-    // Determine growth height based on location (simulating soil quality/logic)
-    float growth = 0.5 + (hash(worldPos.xz) * 0.5); 
-    
-    // Calculate dynamic wind bending
-    float windBend = sin(u_Time * 2.0 + worldPos.x * 0.1 + worldPos.z * 0.1) * u_WindStrength;
-    
-    // Write the computed data back to the GPU memory buffer
-    blades[index].position_and_height = vec4(worldPos, growth);
-    blades[index].tilt_and_wind = vec4(u_WindDirection.x, 0.0, u_WindDirection.y, windBend);
+    uint i = gl_GlobalInvocationID.y * 256u + gl_GlobalInvocationID.x;
+    vec2 p = vec2(gl_GlobalInvocationID.xy);
+    float h = 0.5 + hash(p) * 0.8;
+    float w = sin(u_Time * 2.0 + p.x * 0.1 + p.y * 0.1) * 0.2;
+    blades[i].pos = vec4(p.x, 0.0, p.y, h);
+    blades[i].wind = vec4(0.0, 0.0, 0.0, w);
 }
