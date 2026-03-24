@@ -1,9 +1,8 @@
 #pragma once
 #include <EGL/egl.h>
-#include <EGL/eglext.h> // Required for OpenGL ES 3.x extensions
+#include <EGL/eglext.h>
 #include <android/native_window.h>
 
-// Guard for EGL 1.4 environments that don't define the ES3 bit
 #ifndef EGL_OPENGL_ES3_BIT_KHR
 #define EGL_OPENGL_ES3_BIT_KHR 0x0040
 #endif
@@ -16,6 +15,10 @@ public:
     bool init(ANativeWindow* window);
     void swapBuffers();
     void release();
+
+    // New additions to fetch the screen dimensions
+    int getWidth();
+    int getHeight();
 
 private:
     EGLDisplay display;
