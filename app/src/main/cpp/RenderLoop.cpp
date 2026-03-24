@@ -31,13 +31,15 @@ void RenderLoop::run() {
         lastTime = currentTime;
         totalTime += deltaTime;
 
-        // 1. Update and Render the procedural grass via Compute Shaders
-        if (grassRenderer) {
-            grassRenderer->updateAndRender(totalTime, deltaTime);
-        }
-
-        // 2. Display the frame on the Android Surface
-        if (eglCore) {
+        if (grassRenderer && eglCore) {
+            // Fetch dynamic screen size to handle rotation/scaling
+            int width = eglCore->getWidth();
+            int height = eglCore->getHeight();
+            
+            // Execute the compute logic and rendering
+            grassRenderer->updateAndRender(totalTime, deltaTime, width, height);
+            
+            // Push the drawn frame to the physical display
             eglCore->swapBuffers();
         }
     }
