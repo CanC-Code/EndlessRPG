@@ -60,13 +60,18 @@ RenderLoop* mainLoop = nullptr;
 ANativeWindow* nativeWindow = nullptr;
 
 extern "C" {
+
 JNIEXPORT void JNICALL Java_com_example_game_MainActivity_initAssetManager(JNIEnv* env, jobject thiz, jobject am) {
     NativeAssetManager::init(AAssetManager_fromJava(env, am));
 }
+
 JNIEXPORT void JNICALL Java_com_example_game_MainActivity_initEngine(JNIEnv* env, jobject thiz) {
     engineThreadPool = new JobSystem(std::thread::hardware_concurrency());
-    for (int i = 0; i < 30; ++i) engineThreadPool->enqueue([i] { LOGI("Task %d running", i); });
+    for (int i = 0; i < 30; ++i) {
+        engineThreadPool->enqueue([i] { LOGI("Task %d running", i); });
+    }
 }
+
 JNIEXPORT void JNICALL Java_com_example_game_GameSurfaceView_setNativeSurface(JNIEnv* env, jobject thiz, jobject surface) {
     nativeWindow = ANativeWindow_fromSurface(env, surface);
     graphicsBridge = new EGLCore();
@@ -77,7 +82,34 @@ JNIEXPORT void JNICALL Java_com_example_game_GameSurfaceView_setNativeSurface(JN
         mainLoop->start();
     }
 }
+
+// FIX: This critical function was missing, causing UnsatisfiedLinkError crashes on surface exit
+JNIEXPORT void JNICALL Java_com_example_game_GameSurfaceView_releaseNativeSurface(JNIEnv* env, jobject thiz) {
+    if (mainLoop) {
+        mainLoop->stop();
+        delete mainLoop;
+        mainLoop = nullptr;
+    }
+    if (renderer) {
+        delete renderer;
+        renderer = nullptr;
+    }
+    if (graphicsBridge) {
+        graphicsBridge->release();
+        delete graphicsBridge;
+        graphicsBridge = nullptr;
+    }
+    if (nativeWindow) {
+        ANativeWindow_release(nativeWindow);
+        nativeWindow = nullptr;
+    }
+}
+
 JNIEXPORT void JNICALL Java_com_example_game_MainActivity_shutdownEngine(JNIEnv* env, jobject thiz) {
-    delete engineThreadPool;
+    if (engineThreadPool) {
+        delete engineThreadPool;
+        engineThreadPool = nullptr;
+    }
 }
-}
+
+} // extern "C"
