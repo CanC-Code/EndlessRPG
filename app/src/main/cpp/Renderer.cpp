@@ -12,55 +12,26 @@ GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainPro
                                  terrainVao(0), terrainVbo(0), terrainEbo(0), terrainIndexCount(0),
                                  playerX(0.0f), playerY(0.0f), playerZ(0.0f),
                                  camX(0.0f), camY(1.8f), camZ(0.0f),
-                                 camYaw(-90.0f), camPitch(0.0f), // -90 Yaw faces forward (-Z)
+                                 camYaw(-90.0f), camPitch(0.0f),
                                  moveX(0.0f), moveY(0.0f),
                                  isThirdPerson(false), cameraZoom(12.0f) {}
 
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
-    // 1. Safeguard against garbage memory
     if (std::isnan(mx) || std::isnan(my) || std::isnan(lx) || std::isnan(ly)) return;
 
-    // Movement is standard normalized [-1.0 to 1.0]
     moveX = std::clamp(mx, -1.0f, 1.0f); 
     moveY = std::clamp(my, -1.0f, 1.0f);
     isThirdPerson = tp; 
     cameraZoom = std::clamp(zoom, 2.0f, 40.0f);
     
-    // 2. FIXED CAMERA LOGIC: Convert Absolute Screen Coordinates to Look Deltas
-    static float lastLx = 0.0f;
-    static float lastLy = 0.0f;
+    // CAMERA FIX: Treat lx and ly as small swipe deltas or joystick axes, NOT absolute screen pixels
+    float sensitivity = 0.25f; 
+    camYaw -= lx * sensitivity;
+    camPitch -= ly * sensitivity;
     
-    // If Java sends exactly 0.0, the user lifted their finger
-    if (lx == 0.0f && ly == 0.0f) {
-        lastLx = 0.0f;
-        lastLy = 0.0f;
-    } else {
-        // If this is the first frame of a new touch, snap to the finger position
-        if (lastLx == 0.0f && lastLy == 0.0f) {
-            lastLx = lx;
-            lastLy = ly;
-        }
-        
-        // Calculate the physical pixel distance the finger swiped
-        float deltaX = lx - lastLx;
-        float deltaY = ly - lastLy;
-        
-        // Prevent crazy camera snaps if the finger jumps across the screen
-        if (fabs(deltaX) > 150.0f) deltaX = 0.0f;
-        if (fabs(deltaY) > 150.0f) deltaY = 0.0f;
-        
-        lastLx = lx;
-        lastLy = ly;
-        
-        float sensitivity = 0.25f; // Standard touchscreen sensitivity
-        camYaw -= deltaX * sensitivity;   // Pan left/right
-        camPitch -= deltaY * sensitivity; // Pan up/down
-    }
-    
-    // 3. Keep angles mathematically sound
     camYaw = fmodf(camYaw, 360.0f);
     if (camYaw < 0.0f) camYaw += 360.0f;
-    camPitch = std::clamp(camPitch, -85.0f, 85.0f); // Prevent looking upside down
+    camPitch = std::clamp(camPitch, -85.0f, 85.0f);
 }
 
 GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
@@ -101,7 +72,7 @@ GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
 
 void GrassRenderer::generateTerrainGrid() {
     const int gridSize = 200; 
-    const float size = 1200.0f; // Each grid cell is exactly 6.0 units wide
+    const float size = 1200.0f; 
     std::vector<float> vertices;
     std::vector<unsigned short> indices;
 
@@ -180,6 +151,8 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
 
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
+    
+    // Smooth character movement exactly aligned with the ground
     playerY = getElevation(playerX, playerZ);
 
     float tX, tY, tZ;
@@ -224,15 +197,18 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
 }
 
+// COLLISION FIX: Using smoothed 'uy' interpolation perfectly matches GPU shader math
 float GrassRenderer::getElevation(float x, float z) {
     auto hash = [](float n) { float f = sinf(n) * 43758.5453123f; return f - floorf(f); };
     auto noise = [&](float x, float y) {
         float ix = floorf(x), iy = floorf(y);
         float fx = x - ix, fy = y - iy;
         float ux = fx * fx * (3.0f - 2.0f * fx);
+        float uy = fy * fy * (3.0f - 2.0f * fy); // <- This was missing, causing the floating!
+        
         float a = hash(ix + iy * 57.0f), b = hash(ix + 1.0f + iy * 57.0f);
         float c = hash(ix + (iy + 1.0f) * 57.0f), d = hash(ix + 1.0f + (iy + 1.0f) * 57.0f);
-        return a + (b-a)*ux + (c-a)*fy*(1.0f-ux) + (d-b)*fy*ux;
+        return a + (b-a)*ux + (c-a)*uy*(1.0f-ux) + (d-b)*uy*ux;
     };
     
     auto exactElevation = [&](float px, float pz) {
@@ -242,14 +218,8 @@ float GrassRenderer::getElevation(float x, float z) {
     };
 
     float gridSpacing = 6.0f; 
-    float camSnapX = floorf(camX / gridSpacing) * gridSpacing;
-    float camSnapZ = floorf(camZ / gridSpacing) * gridSpacing;
-    
-    float relX = x - camSnapX;
-    float relZ = z - camSnapZ;
-    
-    float cellX = floorf(relX / gridSpacing) * gridSpacing + camSnapX;
-    float cellZ = floorf(relZ / gridSpacing) * gridSpacing + camSnapZ;
+    float cellX = floorf(x / gridSpacing) * gridSpacing;
+    float cellZ = floorf(z / gridSpacing) * gridSpacing;
     
     float tx = (x - cellX) / gridSpacing;
     float tz = (z - cellZ) / gridSpacing;
