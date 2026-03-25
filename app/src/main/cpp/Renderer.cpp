@@ -3,6 +3,7 @@
 #include <android/log.h>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 #define LOG_TAG "GrassEngine"
 
@@ -20,6 +21,97 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     camYaw += lx * sensitivity;
     camPitch -= ly * sensitivity;
     camPitch = std::clamp(camPitch, -89.0f, 89.0f);
+}
+
+// --- SHADER COMPILATION UTILITIES ---
+
+GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
+    if (source.empty()) return 0;
+    GLuint shader = glCreateShader(type);
+    const char* src = source.c_str();
+    glShaderSource(shader, 1, &src, nullptr);
+    glCompileShader(shader);
+    
+    GLint success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Shader Compile Error: %s", infoLog);
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+GLuint GrassRenderer::createProgram(GLuint vShader, GLuint fShader) {
+    if (!vShader || !fShader) return 0;
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vShader);
+    glAttachShader(program, fShader);
+    glLinkProgram(program);
+    
+    GLint success;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetProgramInfoLog(program, 512, nullptr, infoLog);
+        __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, "Program Link Error: %s", infoLog);
+        return 0;
+    }
+    return program;
+}
+
+GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
+    if (!cShader) return 0;
+    GLuint program = glCreateProgram();
+    glAttachShader(program, cShader);
+    glLinkProgram(program);
+    return program;
+}
+
+// --- GEOMETRY GENERATION ---
+
+void GrassRenderer::generateTerrainGrid() {
+    const int gridSize = 128;
+    const float size = 100.0f; 
+    std::vector<float> vertices;
+    std::vector<unsigned short> indices;
+
+    for(int z = 0; z <= gridSize; ++z) {
+        for(int x = 0; x <= gridSize; ++x) {
+            float px = -size/2.0f + (float)x / gridSize * size;
+            float pz = -size/2.0f + (float)z / gridSize * size;
+            vertices.push_back(px);
+            vertices.push_back(pz);
+        }
+    }
+
+    for(int z = 0; z < gridSize; ++z) {
+        for(int x = 0; x < gridSize; ++x) {
+            int topLeft = z * (gridSize + 1) + x;
+            int topRight = topLeft + 1;
+            int bottomLeft = (z + 1) * (gridSize + 1) + x;
+            int bottomRight = bottomLeft + 1;
+            indices.push_back(topLeft); indices.push_back(bottomLeft); indices.push_back(topRight);
+            indices.push_back(topRight); indices.push_back(bottomLeft); indices.push_back(bottomRight);
+        }
+    }
+
+    terrainIndexCount = indices.size();
+    glGenVertexArrays(1, &terrainVao);
+    glGenBuffers(1, &terrainVbo);
+    glGenBuffers(1, &terrainEbo);
+
+    glBindVertexArray(terrainVao);
+    glBindBuffer(GL_ARRAY_BUFFER, terrainVbo);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainEbo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned short), indices.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
 }
 
 void GrassRenderer::init() {
@@ -49,6 +141,8 @@ void GrassRenderer::init() {
     glEnableVertexAttribArray(0);
 }
 
+// --- MAIN LOOP ---
+
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
     float dtSafe = std::min(dt, 0.033f);
     glViewport(0, 0, width, height);
@@ -58,7 +152,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (computeProgram == 0 || renderProgram == 0 || terrainProgram == 0) return;
     glEnable(GL_DEPTH_TEST);
 
-    // 1. INPUT & MOVEMENT
     float yawRad = camYaw * (M_PI / 180.0f);
     float pitchRad = camPitch * (M_PI / 180.0f);
     float lookX = cosf(yawRad) * cosf(pitchRad);
@@ -73,7 +166,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerZ += (fwdZ * moveY + rgtZ * moveX) * speed;
     playerY = getElevation(playerX, playerZ);
 
-    // 2. CAMERA CALCULATION
     float targetCamX, targetCamY, targetCamZ;
     if (isThirdPerson) {
         targetCamX = playerX - (lookX * cameraZoom);
@@ -89,14 +181,12 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     camY += (targetCamY - camY) * 10.0f * dtSafe;
     camZ += (targetCamZ - camZ) * 10.0f * dtSafe;
 
-    // 3. MATRICES
     float proj[16], view[16], vp[16];
     buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1000.0f);
     if (isThirdPerson) buildLookAt(view, camX, camY, camZ, playerX, playerY + 1.5f, playerZ);
     else buildLookAt(view, camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ);
     multiply(vp, proj, view);
 
-    // 4. COMPUTE & RENDER
     glUseProgram(computeProgram);
     glUniform1f(glGetUniformLocation(computeProgram, "u_Time"), time);
     glUniform3f(glGetUniformLocation(computeProgram, "u_CameraPos"), camX, camY, camZ);
@@ -117,7 +207,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
 }
 
-// --- MATH FIXES ---
+// --- MATH IMPLEMENTATIONS ---
 
 float GrassRenderer::fract(float x) { return x - floorf(x); }
 float GrassRenderer::mix(float x, float y, float a) { return x * (1.0f - a) + y * a; }
@@ -172,5 +262,3 @@ void GrassRenderer::multiply(float* out, const float* a, const float* b) {
         t[j*4+i] = a[0*4+i]*b[j*4+0] + a[1*4+i]*b[j*4+1] + a[2*4+i]*b[j*4+2] + a[3*4+i]*b[j*4+3];
     for (int i=0; i<16; i++) out[i] = t[i];
 }
-
-// (Existing compileShader, createProgram, generateTerrainGrid logic remains the same)
