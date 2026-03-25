@@ -25,8 +25,6 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     cameraZoom = std::clamp(zoom, 2.0f, 40.0f);
     
     float sensitivity = 0.25f; 
-    
-    // FIXED CAMERA INVERSION: Swiping right now looks right (Standard FPS)
     camYaw += lx * sensitivity; 
     camPitch -= ly * sensitivity;
     
@@ -73,7 +71,7 @@ GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
 
 void GrassRenderer::generateTerrainGrid() {
     const int gridSize = 200; 
-    const float size = 1200.0f; 
+    const float size = 800.0f; // View distance 400m out. Gives exactly 4.0m per triangle grid!
     std::vector<float> vertices;
     std::vector<unsigned short> indices;
 
@@ -153,17 +151,8 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     
-    // FIXED COLLISION: Sample 4 points representing the player's physical footprint
-    // This stops the edges of the character model from clipping into steep slopes.
-    float footprintSize = 0.5f; 
-    float hCenter = getElevation(playerX, playerZ);
-    float h1 = getElevation(playerX + footprintSize, playerZ + footprintSize);
-    float h2 = getElevation(playerX - footprintSize, playerZ + footprintSize);
-    float h3 = getElevation(playerX + footprintSize, playerZ - footprintSize);
-    float h4 = getElevation(playerX - footprintSize, playerZ - footprintSize);
-    
-    // The player stands on the highest piece of dirt under their feet
-    playerY = std::max({hCenter, h1, h2, h3, h4});
+    // Exactly matches the GPU Barycentric Triangle - no floating!
+    playerY = getElevation(playerX, playerZ);
 
     float tX, tY, tZ;
     if (isThirdPerson) {
@@ -214,19 +203,19 @@ float GrassRenderer::getElevation(float x, float z) {
         float fx = x - ix, fy = y - iy;
         float ux = fx * fx * (3.0f - 2.0f * fx);
         float uy = fy * fy * (3.0f - 2.0f * fy);
-        
         float a = hash(ix + iy * 57.0f), b = hash(ix + 1.0f + iy * 57.0f);
         float c = hash(ix + (iy + 1.0f) * 57.0f), d = hash(ix + 1.0f + (iy + 1.0f) * 57.0f);
         return a + (b-a)*ux + (c-a)*uy*(1.0f-ux) + (d-b)*uy*ux;
     };
     
     auto exactElevation = [&](float px, float pz) {
-        float h = noise(px * 0.05f, pz * 0.05f) * 5.0f + noise(px * 0.1f, pz * 0.1f) * 2.0f;
-        h += powf(noise(px * 0.01f, pz * 0.01f), 2.0f) * 80.0f;
+        // Soft rolling hills instead of sharp mountains
+        float h = noise(px * 0.01f, pz * 0.01f) * 30.0f + noise(px * 0.03f, pz * 0.03f) * 10.0f;
+        h += noise(px * 0.1f, pz * 0.1f) * 2.0f;
         return h;
     };
 
-    float gridSpacing = 6.0f; 
+    float gridSpacing = 4.0f; // Perfect sync with GPU mesh
     float cellX = floorf(x / gridSpacing) * gridSpacing;
     float cellZ = floorf(z / gridSpacing) * gridSpacing;
     
