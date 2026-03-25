@@ -10,14 +10,14 @@ uniform vec3 u_CameraPos;
 uniform vec3 u_PlayerPos; 
 
 out vec3 v_WorldPos;
+out vec3 v_Normal;
 out float v_ColorMix; 
+out float v_BladeHash; // Unique ID for color variation
 
 const float EARTH_RADIUS = 6371000.0;
 
 void main() {
     Blade b = blades[gl_InstanceID];
-    
-    // Grab the pre-baked altitude from the Compute Shader! No expensive 3D logic here!
     float elevation = b.pos.y;
 
     float distToCam = length(b.pos.xz - u_CameraPos.xz);
@@ -26,20 +26,28 @@ void main() {
 
     vec3 worldPos = a_Pos;
     
-    worldPos.x += b.dir.x * a_Pos.y; 
-    worldPos.z += b.dir.z * a_Pos.y;
+    // Normalize height from 0.0 (root) to 1.0 (tip)
+    float hFactor = a_Pos.y / 1.4; 
+    
+    // PARABOLIC BEND: Squaring the height factor creates a beautiful, natural curve
+    float curve = hFactor * hFactor; 
+
+    // Apply wind as a curve, not a stiff tilt
+    worldPos.x += b.dir.x * curve; 
+    worldPos.z += b.dir.z * curve;
     
     vec3 absoluteBladeRoot = vec3(b.pos.x, elevation, b.pos.z);
     vec3 distToPlayer = absoluteBladeRoot - u_PlayerPos;
     float d = length(distToPlayer);
     
+    // Interactive Trampling (Curved squashing)
     if (d < 1.2) {
         float pushStrength = 1.0 - (d / 1.2);
-        
         vec2 pushDir = normalize(distToPlayer.xz + vec2(0.001)); 
-        worldPos.x += pushDir.x * pushStrength * 0.6 * a_Pos.y;
-        worldPos.z += pushDir.y * pushStrength * 0.6 * a_Pos.y;
-        worldPos.y -= pushStrength * 0.75 * a_Pos.y; 
+        
+        worldPos.x += pushDir.x * pushStrength * 0.8 * curve;
+        worldPos.z += pushDir.y * pushStrength * 0.8 * curve;
+        worldPos.y -= pushStrength * 0.8 * curve; // Flattens the tips down
     }
     
     float scale = smoothstep(100.0, 75.0, distToCam); 
@@ -47,7 +55,13 @@ void main() {
     worldPos += absoluteBladeRoot;
     
     v_WorldPos = worldPos;
-    v_ColorMix = a_Pos.y / 1.4; 
+    v_ColorMix = hFactor; 
+    
+    // Generate a pseudo-random value between 0.0 and 1.0 based on blade location
+    v_BladeHash = fract(sin(b.pos.x * 12.9898 + b.pos.z * 78.233) * 43758.5453);
+
+    // Approximate the normal of the bent grass blade for lighting
+    v_Normal = normalize(vec3(b.dir.x * hFactor, 1.0, b.dir.z * hFactor));
     
     vec3 localPos = vec3(worldPos.x - u_CameraPos.x, worldPos.y, worldPos.z - u_CameraPos.z);
     gl_Position = u_ViewProjection * vec4(localPos, 1.0);
