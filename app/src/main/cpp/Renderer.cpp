@@ -7,7 +7,6 @@
 
 #define LOG_TAG "GrassEngine"
 
-// FIXED: Explicitly initializing ALL variables so memory garbage doesn't break the camera
 GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainProgram(0), 
                                  ssbo(0), vao(0), vbo(0), 
                                  terrainVao(0), terrainVbo(0), terrainEbo(0), terrainIndexCount(0),
@@ -18,28 +17,50 @@ GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainPro
                                  isThirdPerson(false), cameraZoom(12.0f) {}
 
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
-    // Prevent corrupted UI inputs from destroying the matrix
+    // 1. Safeguard against garbage memory
     if (std::isnan(mx) || std::isnan(my) || std::isnan(lx) || std::isnan(ly)) return;
 
+    // Movement is standard normalized [-1.0 to 1.0]
     moveX = std::clamp(mx, -1.0f, 1.0f); 
     moveY = std::clamp(my, -1.0f, 1.0f);
     isThirdPerson = tp; 
     cameraZoom = std::clamp(zoom, 2.0f, 40.0f);
     
-    // Deadzone to prevent drifting
-    if(fabs(lx) < 0.05f) lx = 0.0f;
-    if(fabs(ly) < 0.05f) ly = 0.0f;
-
-    float sensitivity = 1.5f;
-    camYaw += std::clamp(lx, -5.0f, 5.0f) * sensitivity;
-    camPitch -= std::clamp(ly, -5.0f, 5.0f) * sensitivity;
+    // 2. FIXED CAMERA LOGIC: Convert Absolute Screen Coordinates to Look Deltas
+    static float lastLx = 0.0f;
+    static float lastLy = 0.0f;
     
-    // Safely wrap Yaw
+    // If Java sends exactly 0.0, the user lifted their finger
+    if (lx == 0.0f && ly == 0.0f) {
+        lastLx = 0.0f;
+        lastLy = 0.0f;
+    } else {
+        // If this is the first frame of a new touch, snap to the finger position
+        if (lastLx == 0.0f && lastLy == 0.0f) {
+            lastLx = lx;
+            lastLy = ly;
+        }
+        
+        // Calculate the physical pixel distance the finger swiped
+        float deltaX = lx - lastLx;
+        float deltaY = ly - lastLy;
+        
+        // Prevent crazy camera snaps if the finger jumps across the screen
+        if (fabs(deltaX) > 150.0f) deltaX = 0.0f;
+        if (fabs(deltaY) > 150.0f) deltaY = 0.0f;
+        
+        lastLx = lx;
+        lastLy = ly;
+        
+        float sensitivity = 0.25f; // Standard touchscreen sensitivity
+        camYaw -= deltaX * sensitivity;   // Pan left/right
+        camPitch -= deltaY * sensitivity; // Pan up/down
+    }
+    
+    // 3. Keep angles mathematically sound
     camYaw = fmodf(camYaw, 360.0f);
     if (camYaw < 0.0f) camYaw += 360.0f;
-    
-    // Clamp Pitch to prevent Gimbal Lock
-    camPitch = std::clamp(camPitch, -85.0f, 85.0f);
+    camPitch = std::clamp(camPitch, -85.0f, 85.0f); // Prevent looking upside down
 }
 
 GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
@@ -155,7 +176,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float lookZ = sinf(yawRad) * cosf(pitchRad);
     
     float fwdX = cosf(yawRad), fwdZ = sinf(yawRad);
-    // FIXED: Right vector angle is + 90 degrees, not - 90.
     float rgtX = cosf(yawRad + M_PI / 2.0f), rgtZ = sinf(yawRad + M_PI / 2.0f);
 
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
@@ -204,7 +224,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
 }
 
-// FIXED: Exact Barycentric matching to prevent sinking into the floor
 float GrassRenderer::getElevation(float x, float z) {
     auto hash = [](float n) { float f = sinf(n) * 43758.5453123f; return f - floorf(f); };
     auto noise = [&](float x, float y) {
