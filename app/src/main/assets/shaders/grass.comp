@@ -1,35 +1,48 @@
 #version 310 es
-layout(local_size_x = 16, local_size_y = 16) in;
+layout(local_size_x = 256) in;
 
 struct Blade { vec4 pos; vec4 dir; };
 layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
 
-uniform vec3 u_CameraPos;
 uniform float u_Time;
+uniform vec3 u_CameraPos;
 
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float hash(uint n) { return fract(sin(float(n)) * 43758.5453123); }
+
+// High frequency noise to determine "Soil Fertility"
+float soilFertility(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p);
+    vec2 u = f*f*(3.0-2.0*f);
+    float a = fract(sin(dot(i, vec2(12.9898, 78.233))) * 43758.5453);
+    float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
 
 void main() {
-    uint index = gl_GlobalInvocationID.y * 512u + gl_GlobalInvocationID.x;
-    if (index >= 262144u) return;
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= uint(blades.length())) return;
 
-    float spacing = 0.4; // Grass covers a ~200m radius
+    // Radius around camera
+    float r = sqrt(hash(idx)) * 120.0;
+    float theta = hash(idx + 100000u) * 6.2831853;
     
-    // Snap to grid so grass feels anchored to the ground as camera moves
-    float snappedCamX = floor(u_CameraPos.x / spacing) * spacing;
-    float snappedCamZ = floor(u_CameraPos.z / spacing) * spacing;
+    vec2 targetPos = vec2(u_CameraPos.x + r * cos(theta), u_CameraPos.z + r * sin(theta));
 
-    float startX = snappedCamX - (512.0 * spacing / 2.0);
-    float startZ = snappedCamZ - (512.0 * spacing / 2.0);
+    // SOIL CHECK: If the soil is barren (gravel/rock), move this blade somewhere fertile!
+    // This creates incredibly realistic natural clearings and dirt paths.
+    if (soilFertility(targetPos * 0.5) < 0.45) {
+        // Shift to a micro-cluster nearby
+        targetPos += vec2(sin(float(idx)), cos(float(idx))) * 2.0; 
+    }
 
-    float x = startX + float(gl_GlobalInvocationID.x) * spacing;
-    float z = startZ + float(gl_GlobalInvocationID.y) * spacing;
+    blades[idx].pos = vec4(targetPos.x, 0.0, targetPos.y, 1.0);
 
-    x += (hash(vec2(x, z)) - 0.5) * spacing * 0.8;
-    z += (hash(vec2(z, x)) - 0.5) * spacing * 0.8;
-
-    float wind = sin(u_Time * 1.5 + x * 0.1 + z * 0.1) * 0.2;
+    // Natural wind gusts
+    float windPhase = u_Time * 1.5 + targetPos.x * 0.1 + targetPos.y * 0.1;
+    float windStrength = (sin(windPhase) + sin(windPhase * 2.3)) * 0.15 + 0.15;
     
-    blades[index].pos = vec4(x, 0.0, z, 1.0);
-    blades[index].dir = vec4(wind, 1.0, wind, 0.0);
+    vec3 windDir = normalize(vec3(1.0, 0.0, 0.5));
+    blades[idx].dir = vec4(windDir * windStrength, 0.0);
 }
