@@ -7,7 +7,6 @@
 
 #define LOG_TAG "GrassEngine"
 
-// Earth Dimensions in Meters
 const float EARTH_RADIUS = 6371000.0f;
 const float EARTH_CIRCUMFERENCE = 2.0f * M_PI * EARTH_RADIUS;
 
@@ -155,10 +154,8 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     
-    // Mathematically wrap coordinates to prevent integer overflow limits
     playerX = fmodf(playerX, EARTH_CIRCUMFERENCE);
     playerZ = fmodf(playerZ, EARTH_CIRCUMFERENCE);
-
     playerY = getElevation(playerX, playerZ);
 
     float tX, tY, tZ;
@@ -179,7 +176,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float proj[16], view[16], vp[16];
     buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1500.0f);
     
-    // Floating Origin approach: Visual world is locked around the camera to prevent Float32 precision loss
     if (isThirdPerson) buildLookAt(view, 0.0f, camY, 0.0f, playerX - camX, playerY + 1.5f, playerZ - camZ);
     else buildLookAt(view, 0.0f, camY, 0.0f, lookX, camY + lookY, lookZ);
     multiply(vp, proj, view);
@@ -193,20 +189,23 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glUseProgram(terrainProgram);
     glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), camX, camY, camZ);
+    // NEW: Pass player position for dust/trail simulation
+    glUniform3f(glGetUniformLocation(terrainProgram, "u_PlayerPos"), playerX, playerY, playerZ);
     glBindVertexArray(terrainVao);
     glDrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_SHORT, 0);
 
     glUseProgram(renderProgram);
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(renderProgram, "u_CameraPos"), camX, camY, camZ);
+    // NEW: Pass exact player physical coordinates to flatten the grass!
+    glUniform3f(glGetUniformLocation(renderProgram, "u_PlayerPos"), playerX, playerY, playerZ);
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 7, GRASS_COUNT);
 
-    // Player rendering offset for Floating Origin
     if (isThirdPerson) playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, camYaw);
 }
 
-// FULL 3D PLANETARY SAMPLING
+// FULL 3D PLANETARY SAMPLING (Unchanged, ensures spherical integrity)
 float GrassRenderer::getElevation(float x, float z) {
     auto hash3 = [](float px, float py, float pz) {
         float dt = px * 12.9898f + py * 78.233f + pz * 37.719f;
@@ -233,7 +232,6 @@ float GrassRenderer::getElevation(float x, float z) {
     };
 
     auto exactElevation = [&](float mapX, float mapZ) {
-        // Project 2D map coordinates into a 3D sphere coordinate
         float lon = (mapX / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
         float lat = (mapZ / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
         
@@ -241,7 +239,6 @@ float GrassRenderer::getElevation(float x, float z) {
         float sy = sinf(lat);
         float sz = cosf(lat) * sinf(lon);
         
-        // Scale the spherical coordinate up so hills form properly
         float noiseScale = 4000.0f; 
         
         float h = noise3(sx * noiseScale * 0.01f, sy * noiseScale * 0.01f, sz * noiseScale * 0.01f) * 30.0f;
