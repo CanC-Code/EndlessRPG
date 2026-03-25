@@ -12,16 +12,30 @@ GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainPro
                                  terrainVao(0), terrainVbo(0), terrainEbo(0), terrainIndexCount(0) {}
 
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
-    moveX = mx; 
-    moveY = my;
+    // 1. SAFEGUARD: Prevent corrupted UI inputs from destroying the matrix
+    if (std::isnan(mx) || std::isnan(my) || std::isnan(lx) || std::isnan(ly)) return;
+
+    // 2. Clamp movement inputs so the character doesn't rocket into infinity 
+    moveX = std::clamp(mx, -1.0f, 1.0f); 
+    moveY = std::clamp(my, -1.0f, 1.0f);
+    
     isThirdPerson = tp; 
     cameraZoom = std::clamp(zoom, 2.0f, 40.0f);
     
+    // 3. Process look deltas safely
     float sensitivity = 0.15f;
     camYaw += lx * sensitivity;
     camPitch -= ly * sensitivity;
+    
+    // WRAP YAW: Prevents float precision loss which causes the "Vanishing World"
+    camYaw = fmodf(camYaw, 360.0f);
+    if (camYaw < 0.0f) camYaw += 360.0f;
+    
+    // CLAMP PITCH: Prevents Gimbal Lock (Looking perfectly up/down breaks the camera)
     camPitch = std::clamp(camPitch, -89.0f, 89.0f);
 }
+
+// --- Shader and Program Compilation ---
 
 GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
     if (source.empty()) return 0;
@@ -59,9 +73,11 @@ GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
     return program;
 }
 
+// --- Geometry Generation ---
+
 void GrassRenderer::generateTerrainGrid() {
-    const int gridSize = 200; // High detail grid
-    const float size = 1200.0f; // View distance out to 600m
+    const int gridSize = 200; 
+    const float size = 1200.0f; 
     std::vector<float> vertices;
     std::vector<unsigned short> indices;
 
@@ -72,6 +88,7 @@ void GrassRenderer::generateTerrainGrid() {
         }
     }
 
+    // Index Generation aligned exactly to Barycentric logic
     for(int z = 0; z < gridSize; ++z) {
         for(int x = 0; x < gridSize; ++x) {
             int row1 = z * (gridSize + 1);
@@ -96,6 +113,8 @@ void GrassRenderer::generateTerrainGrid() {
     glEnableVertexAttribArray(0);
 }
 
+// --- Engine Initialization ---
+
 void GrassRenderer::init() {
     computeProgram = createComputeProgram(compileShader(GL_COMPUTE_SHADER, NativeAssetManager::loadShaderText("shaders/grass.comp")));
     renderProgram = createProgram(compileShader(GL_VERTEX_SHADER, NativeAssetManager::loadShaderText("shaders/grass.vert")), 
@@ -119,11 +138,11 @@ void GrassRenderer::init() {
     glEnableVertexAttribArray(0);
 }
 
+// --- Main Render Loop ---
+
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
     float dtSafe = std::min(dt, 0.033f);
     glViewport(0, 0, width, height);
-    
-    // Realistic Sky Color
     glClearColor(0.45f, 0.6f, 0.8f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -185,9 +204,11 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
 }
 
-// Procedural Elevation Math
+// --- Bulletproof Math Functions ---
+
+// FIXED: Barycentric interpolation perfectly mimics the GPU so character sticks to the ground
 float GrassRenderer::getElevation(float x, float z) {
-    auto hash = [](float n) { return fmodf(sinf(n) * 43758.5453123f, 1.0f); };
+    auto hash = [](float n) { float f = sinf(n) * 43758.5453123f; return f - floorf(f); };
     auto noise = [&](float x, float y) {
         float ix = floorf(x), iy = floorf(y);
         float fx = x - ix, fy = y - iy;
@@ -196,9 +217,36 @@ float GrassRenderer::getElevation(float x, float z) {
         float c = hash(ix + (iy + 1.0f) * 57.0f), d = hash(ix + 1.0f + (iy + 1.0f) * 57.0f);
         return a + (b-a)*ux + (c-a)*fy*(1.0f-ux) + (d-b)*fy*ux;
     };
-    float h = noise(x * 0.05f, z * 0.05f) * 5.0f + noise(x * 0.1f, z * 0.1f) * 2.0f;
-    h += powf(noise(x * 0.01f, z * 0.01f), 2.0f) * 80.0f;
-    return h;
+    
+    // Core procedural math
+    auto exactElevation = [&](float px, float pz) {
+        float h = noise(px * 0.05f, pz * 0.05f) * 5.0f + noise(px * 0.1f, pz * 0.1f) * 2.0f;
+        h += powf(noise(px * 0.01f, pz * 0.01f), 2.0f) * 80.0f;
+        return h;
+    };
+
+    // Calculate grid alignment to match GPU
+    float gridSpacing = 6.0f; 
+    float camSnapX = floorf(camX);
+    float camSnapZ = floorf(camZ);
+    
+    float relX = x - camSnapX;
+    float relZ = z - camSnapZ;
+    
+    float cellX = floorf(relX / gridSpacing) * gridSpacing + camSnapX;
+    float cellZ = floorf(relZ / gridSpacing) * gridSpacing + camSnapZ;
+    
+    float tx = (x - cellX) / gridSpacing;
+    float tz = (z - cellZ) / gridSpacing;
+    
+    float h00 = exactElevation(cellX, cellZ);
+    float h10 = exactElevation(cellX + gridSpacing, cellZ);
+    float h01 = exactElevation(cellX, cellZ + gridSpacing);
+    float h11 = exactElevation(cellX + gridSpacing, cellZ + gridSpacing);
+    
+    // Interpolate using GPU Triangle splits
+    if (tx + tz <= 1.0f) return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
+    else return h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
 }
 
 void GrassRenderer::buildPerspective(float* m, float fov, float aspect, float zn, float zf) {
@@ -207,16 +255,40 @@ void GrassRenderer::buildPerspective(float* m, float fov, float aspect, float zn
     m[0]=f/aspect; m[5]=f; m[10]=(zf+zn)/(zn-zf); m[11]=-1.0f; m[14]=(2.0f*zf*zn)/(zn-zf);
 }
 
+// FIXED: Matrix crash safeguard using robust GLM logic
 void GrassRenderer::buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz) {
-    float fx=cx-ex, fy=cy-ey, fz=cz-ez;
-    float rlf=1.0f/sqrtf(fx*fx+fy*fy+fz*fz+0.0001f); fx*=rlf; fy*=rlf; fz*=rlf;
-    float sx=fy*0.0f-fz*1.0f, sy=fz*0.0f-fx*0.0f, sz=fx*1.0f-fy*0.0f;
-    float rls=1.0f/sqrtf(sx*sx+sy*sy+sz*sz+0.0001f); sx*=rls; sy*=rls; sz*=rls;
-    float ux=sy*fz-sz*fy, uy=sz*fx-sx*fz, uz=sx*fy-sy*fx;
-    m[0]=sx; m[1]=ux; m[2]=-fx; m[3]=0.0f;
-    m[4]=sy; m[5]=uy; m[6]=-fy; m[7]=0.0f;
-    m[8]=sz; m[9]=uz; m[10]=-fz; m[11]=0.0f;
-    m[12]=-(sx*ex+sy*ey+sz*ez); m[13]=-(ux*ex+uy*ey+uz*ez); m[14]=(fx*ex+fy*ey+fz*ez); m[15]=1.0f;
+    float f[3] = {cx - ex, cy - ey, cz - ez};
+    float flen = sqrtf(f[0]*f[0] + f[1]*f[1] + f[2]*f[2]);
+    if (flen < 0.00001f) flen = 0.00001f;
+    f[0] /= flen; f[1] /= flen; f[2] /= flen;
+    
+    float up[3] = {0.0f, 1.0f, 0.0f};
+    
+    float s[3] = {
+        f[1]*up[2] - f[2]*up[1],
+        f[2]*up[0] - f[0]*up[2],
+        f[0]*up[1] - f[1]*up[0]
+    };
+    float slen = sqrtf(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
+    if (slen < 0.00001f) {
+        s[0] = 1.0f; s[1] = 0.0f; s[2] = 0.0f;
+    } else {
+        s[0] /= slen; s[1] /= slen; s[2] /= slen;
+    }
+    
+    float u[3] = {
+        s[1]*f[2] - s[2]*f[1],
+        s[2]*f[0] - s[0]*f[2],
+        s[0]*f[1] - s[1]*f[0]
+    };
+    
+    m[0] = s[0];  m[1] = u[0];  m[2] = -f[0]; m[3] = 0.0f;
+    m[4] = s[1];  m[5] = u[1];  m[6] = -f[1]; m[7] = 0.0f;
+    m[8] = s[2];  m[9] = u[2];  m[10] = -f[2]; m[11] = 0.0f;
+    m[12] = -(s[0]*ex + s[1]*ey + s[2]*ez);
+    m[13] = -(u[0]*ex + u[1]*ey + u[2]*ez);
+    m[14] = (f[0]*ex + f[1]*ey + f[2]*ez);
+    m[15] = 1.0f;
 }
 
 void GrassRenderer::multiply(float* out, const float* a, const float* b) {
