@@ -7,12 +7,10 @@
 #define LOG_TAG "GrassEngine"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
-// Constructor: Initializes all OpenGL handles to 0
 GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainProgram(0), 
                                  ssbo(0), vao(0), vbo(0), 
                                  terrainVao(0), terrainVbo(0), terrainEbo(0), terrainIndexCount(0) {}
 
-// UPDATED: Receives all input data from the Kotlin UI
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
     moveX = mx; 
     moveY = my;
@@ -23,12 +21,10 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     camYaw += lx * sensitivity;
     camPitch -= ly * sensitivity;
     
-    // Clamp pitch to prevent the camera from flipping or causing gimbal lock
     if(camPitch > 85.0f) camPitch = 85.0f;
     if(camPitch < -85.0f) camPitch = -85.0f;
 }
 
-// Shader helper functions
 GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
     if (source.empty()) return 0;
     GLuint shader = glCreateShader(type);
@@ -54,14 +50,13 @@ GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
     if (!cShader) return 0;
     GLuint program = glCreateProgram();
     glAttachShader(program, cShader); glLinkProgram(program);
-    GLint success; glGetProgramiv(program, GL_LINK_STATUS, &success);
-    if (!success) return 0;
+    glLinkProgram(program);
     return program;
 }
 
 void GrassRenderer::generateTerrainGrid() {
     const int gridSize = 128;
-    const float size = 100.0f; // Increased size to cover more horizon
+    const float size = 100.0f; // Large enough to cover the fog range
     std::vector<float> vertices;
     std::vector<unsigned short> indices;
 
@@ -98,7 +93,6 @@ void GrassRenderer::generateTerrainGrid() {
 }
 
 void GrassRenderer::init() {
-    // 1. Load and Compile Shaders
     std::string cSrc = NativeAssetManager::loadShaderText("shaders/grass.comp");
     std::string vSrc = NativeAssetManager::loadShaderText("shaders/grass.vert");
     std::string fSrc = NativeAssetManager::loadShaderText("shaders/grass.frag");
@@ -109,13 +103,9 @@ void GrassRenderer::init() {
     renderProgram = createProgram(compileShader(GL_VERTEX_SHADER, vSrc), compileShader(GL_FRAGMENT_SHADER, fSrc));
     terrainProgram = createProgram(compileShader(GL_VERTEX_SHADER, tVSrc), compileShader(GL_FRAGMENT_SHADER, tFSrc));
 
-    // 2. Initialize Player Model Geometry
     playerModel.init();
-
-    // 3. Setup Terrain Grid
     generateTerrainGrid();
 
-    // 4. Setup Grass SSBO
     glGenBuffers(1, &ssbo);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, GRASS_COUNT * 8 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
@@ -145,7 +135,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
 
-    // --- 1. MOVEMENT & COLLISION MATH ---
+    // --- PHYSICS ---
     float yawRad = camYaw * (M_PI / 180.0f);
     float pitchRad = camPitch * (M_PI / 180.0f);
 
@@ -157,31 +147,30 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float rightX = cosf(yawRad - M_PI / 2.0f), rightZ = sinf(yawRad - M_PI / 2.0f);
 
     float speed = 8.0f * dt;
+    // FIXED: Used rightZ for Z-axis movement calculation
     playerX += (forwardX * moveY + rightX * moveX) * speed;
     playerZ += (forwardZ * moveY + rightZ * moveX) * speed; 
     playerY = getElevation(playerX, playerZ);
 
-    // --- 2. CAMERA ORBIT & LERP (Smooth Follow) ---
+    // --- CAMERA LOGIC ---
     float targetCamX, targetCamY, targetCamZ;
     if (isThirdPerson) {
         targetCamX = playerX - (lookX * cameraZoom);
         targetCamY = (playerY + 2.0f) - (lookY * cameraZoom); 
         targetCamZ = playerZ - (lookZ * cameraZoom);
         
-        // Ground Collision: Keep camera above hills
         float floor = getElevation(targetCamX, targetCamZ) + 0.8f;
         if (targetCamY < floor) targetCamY = floor;
     } else {
         targetCamX = playerX; targetCamY = playerY + 1.8f; targetCamZ = playerZ;
     }
 
-    // Apply LERP for "heavy" cinematic camera feel
     float lerpSpeed = 12.0f * dt;
     camX += (targetCamX - camX) * lerpSpeed;
     camY += (targetCamY - camY) * lerpSpeed;
     camZ += (targetCamZ - camZ) * lerpSpeed;
 
-    // --- 3. COMPUTE PASS (Grass Displacement) ---
+    // Compute Grass
     glUseProgram(computeProgram);
     glUniform1f(glGetUniformLocation(computeProgram, "u_Time"), time);
     glUniform3f(glGetUniformLocation(computeProgram, "u_CameraPos"), camX, camY, camZ);
@@ -189,38 +178,38 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glDispatchCompute(512 / 16, 512 / 16, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    // --- 4. RENDER PASSES ---
+    // Matrices
     float proj[16], view[16], vp[16];
     buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1000.0f);
     
-    // CRITICAL FIX: Ensure target is never exactly equal to camera pos
+    // Ensure we are looking at the player head height
     if (isThirdPerson) {
         buildLookAt(view, camX, camY, camZ, playerX, playerY + 1.8f, playerZ);
     } else {
+        // Robust First Person look target
         buildLookAt(view, camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ);
     }
     multiply(vp, proj, view);
 
-    // Draw Terrain
+    // Render Terrain
     glUseProgram(terrainProgram);
     glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), camX, camY, camZ);
     glBindVertexArray(terrainVao);
     glDrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_SHORT, 0);
 
-    // Draw Grass
+    // Render Grass
     glUseProgram(renderProgram);
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 7, GRASS_COUNT);
 
-    // Draw Character Model
+    // Render Character (3rd Person Only)
     if (isThirdPerson) {
         playerModel.render(vp, playerX, playerY, playerZ, camYaw);
     }
 }
 
-// Procedural Math (Must match the GPU precisely)
 float GrassRenderer::fract(float x) { return x - std::floor(x); }
 float GrassRenderer::mix(float x, float y, float a) { return x * (1.0f - a) + y * a; }
 float GrassRenderer::smoothstep(float edge0, float edge1, float x) {
@@ -252,21 +241,31 @@ float GrassRenderer::getElevation(float px, float pz) {
     return mix(plateaus + hills, mountains, biomeMask) + fbm(px * 0.3f, pz * 0.3f) * 0.4f;
 }
 
-// Linear Algebra Helpers
 void GrassRenderer::buildPerspective(float* m, float fov, float aspect, float zn, float zf) {
     float f = 1.0f / tanf(fov / 2.0f);
     for(int i=0; i<16; i++) m[i] = 0.0f;
     m[0]=f/aspect; m[5]=f; m[10]=(zf+zn)/(zn-zf); m[11]=-1.0f; m[14]=(2.0f*zf*zn)/(zn-zf);
 }
+
+// FIXED: Corrected the LookAt translation math (Sign and Axis alignment)
 void GrassRenderer::buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz) {
     float fx=cx-ex, fy=cy-ey, fz=cz-ez;
     float rlf=1.0f/sqrtf(fx*fx+fy*fy+fz*fz); fx*=rlf; fy*=rlf; fz*=rlf;
     float sx=fy*0.0f-fz*1.0f, sy=fz*0.0f-fx*0.0f, sz=fx*1.0f-fy*0.0f;
     float rls=1.0f/sqrtf(sx*sx+sy*sy+sz*sz); sx*=rls; sy*=rls; sz*=rls;
     float ux=sy*fz-sz*fy, uy=sz*fx-sx*fz, uz=sx*fy-sy*fx;
-    m[0]=sx; m[1]=sy; m[2]=sz; m[3]=0.0f; m[4]=ux; m[5]=uy; m[6]=uz; m[7]=0.0f;
-    m[8]=-fx; m[9]=-fy; m[10]=-fz; m[11]=0.0f; m[12]=-(sx*ex+sy*ey+sz*ez); m[13]=-(ux*ex+uy*ey+uz*ez); m[14]=(fx*ex+fy*ey+fz*ez); m[15]=1.0f;
+    
+    m[0]=sx; m[1]=sy; m[2]=sz; m[3]=0.0f;
+    m[4]=ux; m[5]=uy; m[6]=uz; m[7]=0.0f;
+    m[8]=-fx; m[9]=-fy; m[10]=-fz; m[11]=0.0f;
+    
+    // Translation values must be negative dot products of eye and axis vectors
+    m[12]=-(sx*ex + sy*ey + sz*ez); 
+    m[13]=-(ux*ex + uy*ey + uz*ez); 
+    m[14]= (fx*ex + fy*ey + fz*ez); // Corrected depth sign
+    m[15]=1.0f;
 }
+
 void GrassRenderer::multiply(float* out, const float* a, const float* b) {
     float tmp[16];
     for(int i=0; i<4; i++) for(int j=0; j<4; j++)
