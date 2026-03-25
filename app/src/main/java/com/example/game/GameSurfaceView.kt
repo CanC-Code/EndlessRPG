@@ -9,6 +9,7 @@ import android.view.SurfaceView
 import android.view.SurfaceHolder
 import android.view.MotionEvent
 import android.widget.FrameLayout
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.sign
@@ -23,21 +24,21 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
 
     private var leftPointerId = -1
     private var rightPointerId = -1
-    
+
     // --- ERGONOMIC ADJUSTMENTS ---
-    private val maxRadius = 130f // Reduced from 180f for better ergonomics
+    private val maxRadius = 130f 
     private var joyBaseX = 0f
     private var joyBaseY = 0f
     private var joyCurrentX = 0f
     private var joyCurrentY = 0f
-    
+
     private var moveX = 0f
     private var moveY = 0f
     private var lastLookX = 0f
     private var lastLookY = 0f
 
     private var isThirdPerson = false
-    private var cameraZoom = 8.0f // Slightly further default for better scale
+    private var cameraZoom = 8.0f 
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(detector: ScaleGestureDetector): Boolean {
@@ -58,7 +59,7 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
     private val baseOutlinePaint = Paint().apply {
         color = Color.argb(60, 255, 255, 255)
         style = Paint.Style.STROKE
-        strokeWidth = 4f // Thinner, more professional line
+        strokeWidth = 4f 
         isAntiAlias = true
     }
     private val knobPaint = Paint().apply {
@@ -86,7 +87,6 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        // Positioned 15% from left, 15% from bottom
         joyBaseX = w * 0.15f
         joyBaseY = h - (h * 0.15f)
         joyCurrentX = joyBaseX
@@ -128,18 +128,20 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
                     val id = event.getPointerId(i)
                     val px = event.getX(i)
                     val py = event.getY(i)
-                    
+
                     if (id == leftPointerId) {
                         updateJoystick(px, py)
                     } else if (id == rightPointerId && !scaleDetector.isInProgress) {
-                        // --- CAMERA SMOOTHING CURVE ---
-                        // Applying a mild power curve makes small movements more precise
+                        
+                        // --- FIXED CAMERA SMOOTHING ---
                         val rawDX = px - lastLookX
                         val rawDY = py - lastLookY
-                        
-                        lookDX += rawDX.pow(1.2f * sign(rawDX)) // Quadratic sensitivity
-                        lookDY += rawDY.pow(1.2f * sign(rawDY))
-                        
+
+                        // Safe mathematical acceleration curve: 
+                        // Using abs() guarantees we don't calculate fractional powers of negative numbers (which causes NaN).
+                        lookDX += sign(rawDX) * abs(rawDX).pow(1.1f)
+                        lookDY += sign(rawDY) * abs(rawDY).pow(1.1f)
+
                         lastLookX = px
                         lastLookY = py
                     }
@@ -158,7 +160,7 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
                 }
             }
         }
-        
+
         updateInput(moveX, moveY, lookDX, lookDY, isThirdPerson, cameraZoom)
         return true
     }
@@ -167,8 +169,7 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         var dx = px - joyBaseX
         var dy = py - joyBaseY
         val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
-        
-        // Deadzone check (ignore tiny accidental movements)
+
         if (dist < 10f) {
             moveX = 0f
             moveY = 0f
@@ -179,27 +180,25 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
             dx = (dx / dist) * maxRadius
             dy = (dy / dist) * maxRadius
         }
-        
+
         joyCurrentX = joyBaseX + dx
         joyCurrentY = joyBaseY + dy
-        
-        // Inverted DX for correct movement vector
-        moveX = -(dx / maxRadius)
-        moveY = -(dy / maxRadius) 
+
+        // --- FIXED MOVEMENT AXES ---
+        // dx is positive when dragging right, so moveX should be positive.
+        // dy is negative when dragging up, so we invert it for forward momentum.
+        moveX = dx / maxRadius
+        moveY = -dy / maxRadius 
         invalidate()
     }
 
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas) 
-        
-        // Joystick Base
+
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, basePaint)
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, baseOutlinePaint)
-        
-        // Knob
         canvas.drawCircle(joyCurrentX, joyCurrentY, maxRadius * 0.4f, knobPaint)
 
-        // Refined Toggle Button
         canvas.drawRoundRect(60f, 60f, 410f, 170f, 30f, 30f, buttonPaint)
         val modeText = if (isThirdPerson) "VIEW: 3RD" else "VIEW: 1ST"
         canvas.drawText(modeText, 235f, 130f, buttonTextPaint)
