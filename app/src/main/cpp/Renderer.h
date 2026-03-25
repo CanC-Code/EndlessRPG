@@ -2,7 +2,7 @@
 #include <GLES3/gl31.h>
 #include <string>
 #include <vector>
-#include "Character.h" // NEW: Required to use the Character class
+#include "Character.h" // Required for the player model
 
 const int GRASS_COUNT = 262144; 
 
@@ -11,60 +11,42 @@ public:
     GrassRenderer();
     void init();
     void updateAndRender(float time, float deltaTime, int screenWidth, int screenHeight);
-
-    // UPDATED SIGNATURE: Supports view switching and pinch-to-zoom
     void updateInput(float mx, float my, float lx, float ly, bool isThirdPerson, float zoom);
 
-    // --- Separated Player Position ---
-    // This is where the physical character/collision logic exists
-    float playerX = 0.0f;
-    float playerY = 0.0f;
-    float playerZ = 0.0f;
-
-    // Camera Position (Derived from player position + orbit logic)
-    float camX = 0.0f;
-    float camY = 1.8f;
-    float camZ = 0.0f;
-
-    float camYaw = -90.0f; 
-    float camPitch = 0.0f;
-
-    // Global Engine State
-    float moveX = 0.0f;
-    float moveY = 0.0f;
+    // Player and Camera State
+    float playerX = 0.0f, playerY = 0.0f, playerZ = 0.0f;
+    float camX = 0.0f, camY = 1.8f, camZ = 0.0f;
+    float camYaw = -90.0f, camPitch = 0.0f;
+    float moveX = 0.0f, moveY = 0.0f;
     bool isThirdPerson = false;
-    float cameraZoom = 5.0f;
+    float cameraZoom = 8.0f;
 
 private:
-    // --- NEW: Player Model Instance ---
     Character playerModel;
 
-    // OpenGL Handles for Grass
-    GLuint computeProgram, renderProgram;
+    // OpenGL Handles
+    GLuint computeProgram, renderProgram, terrainProgram;
     GLuint ssbo, vao, vbo;
-
-    // OpenGL Handles for Terrain
-    GLuint terrainProgram;
     GLuint terrainVao, terrainVbo, terrainEbo;
     int terrainIndexCount;
 
-    // Initialization Methods
+    // Internal Methods
     GLuint compileShader(GLenum type, const std::string& source);
     GLuint createProgram(GLuint vShader, GLuint fShader);
     GLuint createComputeProgram(GLuint cShader);
     void generateTerrainGrid();
 
-    // Matrix Math
+    // Math
     void buildPerspective(float* m, float fov, float aspect, float zNear, float zFar);
     void buildLookAt(float* m, float ex, float ey, float ez, float cx, float cy, float cz);
     void multiply(float* out, const float* a, const float* b);
 
-    // CPU Terrain Math (Matches GLSL exactly for character-ground alignment)
+    // Procedural Math (C++ Scalar Versions)
     float fract(float x);
-    float hash(float px, float py);
+    float hash(float x, float y);
     float mix(float x, float y, float a);
     float smoothstep(float edge0, float edge1, float x);
-    float noise(float px, float py);
-    float fbm(float px, float py);
-    float getElevation(float px, float pz);
+    float noise(float x, float y);
+    float fbm(float x, float y);
+    float getElevation(float x, float y);
 };
