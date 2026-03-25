@@ -23,8 +23,6 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     camPitch = std::clamp(camPitch, -89.0f, 89.0f);
 }
 
-// --- Shader and Program Compilation ---
-
 GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
     if (source.empty()) return 0;
     GLuint shader = glCreateShader(type);
@@ -61,11 +59,9 @@ GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
     return program;
 }
 
-// --- Geometry Generation ---
-
 void GrassRenderer::generateTerrainGrid() {
-    const int gridSize = 128;
-    const float size = 100.0f; 
+    const int gridSize = 200; // High detail grid
+    const float size = 1200.0f; // View distance out to 600m
     std::vector<float> vertices;
     std::vector<unsigned short> indices;
 
@@ -100,8 +96,6 @@ void GrassRenderer::generateTerrainGrid() {
     glEnableVertexAttribArray(0);
 }
 
-// --- Engine Initialization ---
-
 void GrassRenderer::init() {
     computeProgram = createComputeProgram(compileShader(GL_COMPUTE_SHADER, NativeAssetManager::loadShaderText("shaders/grass.comp")));
     renderProgram = createProgram(compileShader(GL_VERTEX_SHADER, NativeAssetManager::loadShaderText("shaders/grass.vert")), 
@@ -117,7 +111,7 @@ void GrassRenderer::init() {
     glBufferData(GL_SHADER_STORAGE_BUFFER, GRASS_COUNT * 8 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 
-    float blade[] = { -0.03f, 0.0f, 0.0f, 0.03f, 0.0f, 0.0f, -0.02f, 0.4f, 0.0f, 0.02f, 0.4f, 0.0f, -0.01f, 0.8f, 0.0f, 0.01f, 0.8f, 0.0f, 0.0f, 1.1f, 0.0f };
+    float blade[] = { -0.04f, 0.0f, 0.0f, 0.04f, 0.0f, 0.0f, -0.02f, 0.5f, 0.0f, 0.02f, 0.5f, 0.0f, -0.01f, 1.0f, 0.0f, 0.01f, 1.0f, 0.0f, 0.0f, 1.4f, 0.0f };
     glGenVertexArrays(1, &vao); glGenBuffers(1, &vbo);
     glBindVertexArray(vao); glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(blade), blade, GL_STATIC_DRAW);
@@ -125,12 +119,12 @@ void GrassRenderer::init() {
     glEnableVertexAttribArray(0);
 }
 
-// --- Main Render Loop ---
-
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
     float dtSafe = std::min(dt, 0.033f);
     glViewport(0, 0, width, height);
-    glClearColor(0.4f, 0.55f, 0.75f, 1.0f);
+    
+    // Realistic Sky Color
+    glClearColor(0.45f, 0.6f, 0.8f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (!computeProgram || !renderProgram || !terrainProgram) return;
@@ -145,8 +139,8 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float fwdX = cosf(yawRad), fwdZ = sinf(yawRad);
     float rgtX = cosf(yawRad - M_PI / 2.0f), rgtZ = sinf(yawRad - M_PI / 2.0f);
 
-    playerX += (fwdX * moveY + rgtX * moveX) * 10.0f * dtSafe;
-    playerZ += (fwdZ * moveY + rgtZ * moveX) * 10.0f * dtSafe;
+    playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
+    playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     playerY = getElevation(playerX, playerZ);
 
     float tX, tY, tZ;
@@ -165,7 +159,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     camZ += (tZ - camZ) * 12.0f * dtSafe;
 
     float proj[16], view[16], vp[16];
-    buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1000.0f);
+    buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1500.0f);
     if (isThirdPerson) buildLookAt(view, camX, camY, camZ, playerX, playerY + 1.5f, playerZ);
     else buildLookAt(view, camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ);
     multiply(vp, proj, view);
@@ -184,16 +178,16 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
 
     glUseProgram(renderProgram);
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
+    glUniform3f(glGetUniformLocation(renderProgram, "u_CameraPos"), camX, camY, camZ);
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 7, GRASS_COUNT);
 
     if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
 }
 
-// --- Math Functions ---
-
+// Procedural Elevation Math
 float GrassRenderer::getElevation(float x, float z) {
-    auto hash = [](float n) { return fmodf(sinf(n) * 43758.5453f, 1.0f); };
+    auto hash = [](float n) { return fmodf(sinf(n) * 43758.5453123f, 1.0f); };
     auto noise = [&](float x, float y) {
         float ix = floorf(x), iy = floorf(y);
         float fx = x - ix, fy = y - iy;
@@ -202,7 +196,9 @@ float GrassRenderer::getElevation(float x, float z) {
         float c = hash(ix + (iy + 1.0f) * 57.0f), d = hash(ix + 1.0f + (iy + 1.0f) * 57.0f);
         return a + (b-a)*ux + (c-a)*fy*(1.0f-ux) + (d-b)*fy*ux;
     };
-    return noise(x * 0.05f, z * 0.05f) * 5.0f + noise(x * 0.1f, z * 0.1f) * 2.0f;
+    float h = noise(x * 0.05f, z * 0.05f) * 5.0f + noise(x * 0.1f, z * 0.1f) * 2.0f;
+    h += powf(noise(x * 0.01f, z * 0.01f), 2.0f) * 80.0f;
+    return h;
 }
 
 void GrassRenderer::buildPerspective(float* m, float fov, float aspect, float zn, float zf) {
