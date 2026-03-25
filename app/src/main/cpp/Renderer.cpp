@@ -4,6 +4,8 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <chrono>
+#include <thread>
 
 #define LOG_TAG "GrassEngine"
 
@@ -133,6 +135,21 @@ void GrassRenderer::init() {
 }
 
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
+    // --- STANDARD 30 FPS LOCK ---
+    static auto lastFrameTime = std::chrono::high_resolution_clock::now();
+    auto currentFrameTime = std::chrono::high_resolution_clock::now();
+    float frameDt = std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
+    
+    const float TARGET_FPS = 30.0f;
+    const float TARGET_DT = 1.0f / TARGET_FPS;
+    
+    if (frameDt < TARGET_DT) {
+        std::this_thread::sleep_for(std::chrono::duration<float>(TARGET_DT - frameDt));
+        currentFrameTime = std::chrono::high_resolution_clock::now();
+    }
+    lastFrameTime = currentFrameTime;
+    // -----------------------------
+
     float dtSafe = std::min(dt, 0.033f);
     glViewport(0, 0, width, height);
     glClearColor(0.45f, 0.6f, 0.8f, 1.0f);
@@ -189,7 +206,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glUseProgram(terrainProgram);
     glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), camX, camY, camZ);
-    // NEW: Pass player position for dust/trail simulation
     glUniform3f(glGetUniformLocation(terrainProgram, "u_PlayerPos"), playerX, playerY, playerZ);
     glBindVertexArray(terrainVao);
     glDrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_SHORT, 0);
@@ -197,7 +213,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glUseProgram(renderProgram);
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(renderProgram, "u_CameraPos"), camX, camY, camZ);
-    // NEW: Pass exact player physical coordinates to flatten the grass!
     glUniform3f(glGetUniformLocation(renderProgram, "u_PlayerPos"), playerX, playerY, playerZ);
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 7, GRASS_COUNT);
@@ -205,7 +220,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (isThirdPerson) playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, camYaw);
 }
 
-// FULL 3D PLANETARY SAMPLING (Unchanged, ensures spherical integrity)
 float GrassRenderer::getElevation(float x, float z) {
     auto hash3 = [](float px, float py, float pz) {
         float dt = px * 12.9898f + py * 78.233f + pz * 37.719f;
