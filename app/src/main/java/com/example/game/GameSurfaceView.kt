@@ -9,10 +9,7 @@ import android.view.SurfaceView
 import android.view.SurfaceHolder
 import android.view.MotionEvent
 import android.widget.FrameLayout
-import kotlin.math.abs
 import kotlin.math.hypot
-import kotlin.math.pow
-import kotlin.math.sign
 
 class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Callback {
     private external fun onSurfaceCreated(surface: android.view.Surface)
@@ -25,7 +22,6 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
     private var leftPointerId = -1
     private var rightPointerId = -1
 
-    // --- ERGONOMIC ADJUSTMENTS ---
     private val maxRadius = 130f 
     private var joyBaseX = 0f
     private var joyBaseY = 0f
@@ -50,34 +46,11 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         }
     })
 
-    // --- REFINED UI STYLES ---
-    private val basePaint = Paint().apply {
-        color = Color.argb(30, 255, 255, 255)
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
-    private val baseOutlinePaint = Paint().apply {
-        color = Color.argb(60, 255, 255, 255)
-        style = Paint.Style.STROKE
-        strokeWidth = 4f 
-        isAntiAlias = true
-    }
-    private val knobPaint = Paint().apply {
-        color = Color.argb(200, 255, 255, 255)
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
-    private val buttonPaint = Paint().apply { 
-        color = Color.argb(160, 20, 20, 20)
-        style = Paint.Style.FILL
-        isAntiAlias = true 
-    }
-    private val buttonTextPaint = Paint().apply { 
-        color = Color.WHITE
-        textSize = 40f
-        textAlign = Paint.Align.CENTER
-        isAntiAlias = true 
-    }
+    private val basePaint = Paint().apply { color = Color.argb(30, 255, 255, 255); style = Paint.Style.FILL; isAntiAlias = true }
+    private val baseOutlinePaint = Paint().apply { color = Color.argb(60, 255, 255, 255); style = Paint.Style.STROKE; strokeWidth = 4f; isAntiAlias = true }
+    private val knobPaint = Paint().apply { color = Color.argb(200, 255, 255, 255); style = Paint.Style.FILL; isAntiAlias = true }
+    private val buttonPaint = Paint().apply { color = Color.argb(160, 20, 20, 20); style = Paint.Style.FILL; isAntiAlias = true }
+    private val buttonTextPaint = Paint().apply { color = Color.WHITE; textSize = 40f; textAlign = Paint.Align.CENTER; isAntiAlias = true }
 
     init {
         surfaceView.holder.addCallback(this)
@@ -94,20 +67,20 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        scaleDetector.onTouchEvent(event)
+        // Only allow zooming if the joystick is NOT being used (prevents control freezing)
+        if (leftPointerId == -1) scaleDetector.onTouchEvent(event)
 
         val action = event.actionMasked
-        val pointerIndex = event.actionIndex
-        val pointerId = event.getPointerId(pointerIndex)
-        val x = event.getX(pointerIndex)
-        val y = event.getY(pointerIndex)
-
         var lookDX = 0f
         var lookDY = 0f
 
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                // Button Detection (Top Left)
+                val pointerIndex = event.actionIndex
+                val pointerId = event.getPointerId(pointerIndex)
+                val x = event.getX(pointerIndex)
+                val y = event.getY(pointerIndex)
+
                 if (x < 450f && y < 200f) {
                     isThirdPerson = !isThirdPerson
                     invalidate()
@@ -132,22 +105,16 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
                     if (id == leftPointerId) {
                         updateJoystick(px, py)
                     } else if (id == rightPointerId && !scaleDetector.isInProgress) {
-                        
-                        // --- FIXED CAMERA SMOOTHING ---
-                        val rawDX = px - lastLookX
-                        val rawDY = py - lastLookY
-
-                        // Safe mathematical acceleration curve: 
-                        // Using abs() guarantees we don't calculate fractional powers of negative numbers (which causes NaN).
-                        lookDX += sign(rawDX) * abs(rawDX).pow(1.1f)
-                        lookDY += sign(rawDY) * abs(rawDY).pow(1.1f)
-
+                        // FIXED: Smooth, linear tracking. No unpredictable exponential curves.
+                        lookDX += (px - lastLookX) * 0.8f 
+                        lookDY += (py - lastLookY) * 0.8f
                         lastLookX = px
                         lastLookY = py
                     }
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+                val pointerId = event.getPointerId(event.actionIndex)
                 if (pointerId == leftPointerId) {
                     leftPointerId = -1
                     joyCurrentX = joyBaseX
@@ -170,23 +137,11 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
         var dy = py - joyBaseY
         val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
 
-        if (dist < 10f) {
-            moveX = 0f
-            moveY = 0f
-            return
-        }
-
-        if (dist > maxRadius) {
-            dx = (dx / dist) * maxRadius
-            dy = (dy / dist) * maxRadius
-        }
+        if (dist < 10f) { moveX = 0f; moveY = 0f; return }
+        if (dist > maxRadius) { dx = (dx / dist) * maxRadius; dy = (dy / dist) * maxRadius }
 
         joyCurrentX = joyBaseX + dx
         joyCurrentY = joyBaseY + dy
-
-        // --- FIXED MOVEMENT AXES ---
-        // dx is positive when dragging right, so moveX should be positive.
-        // dy is negative when dragging up, so we invert it for forward momentum.
         moveX = dx / maxRadius
         moveY = -dy / maxRadius 
         invalidate()
@@ -194,14 +149,11 @@ class GameSurfaceView(context: Context) : FrameLayout(context), SurfaceHolder.Ca
 
     override fun dispatchDraw(canvas: Canvas) {
         super.dispatchDraw(canvas) 
-
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, basePaint)
         canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, baseOutlinePaint)
         canvas.drawCircle(joyCurrentX, joyCurrentY, maxRadius * 0.4f, knobPaint)
-
         canvas.drawRoundRect(60f, 60f, 410f, 170f, 30f, 30f, buttonPaint)
-        val modeText = if (isThirdPerson) "VIEW: 3RD" else "VIEW: 1ST"
-        canvas.drawText(modeText, 235f, 130f, buttonTextPaint)
+        canvas.drawText(if (isThirdPerson) "VIEW: 3RD" else "VIEW: 1ST", 235f, 130f, buttonTextPaint)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) { onSurfaceCreated(holder.surface) }
