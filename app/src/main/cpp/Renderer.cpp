@@ -23,7 +23,7 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     camPitch = std::clamp(camPitch, -89.0f, 89.0f);
 }
 
-[span_2](start_span)// --- FIXED: Implementation of Missing Symbols ---[span_2](end_span)
+// --- Shader and Program Compilation ---
 
 GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
     if (source.empty()) return 0;
@@ -61,6 +61,8 @@ GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
     return program;
 }
 
+// --- Geometry Generation ---
+
 void GrassRenderer::generateTerrainGrid() {
     const int gridSize = 128;
     const float size = 100.0f; 
@@ -87,13 +89,18 @@ void GrassRenderer::generateTerrainGrid() {
     glGenVertexArrays(1, &terrainVao);
     glGenBuffers(1, &terrainVbo); glGenBuffers(1, &terrainEbo);
     glBindVertexArray(terrainVao);
+    
     glBindBuffer(GL_ARRAY_BUFFER, terrainVbo);
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+    
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainEbo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned short), indices.data(), GL_STATIC_DRAW);
+    
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 }
+
+// --- Engine Initialization ---
 
 void GrassRenderer::init() {
     computeProgram = createComputeProgram(compileShader(GL_COMPUTE_SHADER, NativeAssetManager::loadShaderText("shaders/grass.comp")));
@@ -117,6 +124,8 @@ void GrassRenderer::init() {
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 }
+
+// --- Main Render Loop ---
 
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
     float dtSafe = std::min(dt, 0.033f);
@@ -181,7 +190,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
 }
 
-[span_3](start_span)// --- FIXED: Math Functions ---[span_3](end_span)
+// --- Math Functions ---
 
 float GrassRenderer::getElevation(float x, float z) {
     auto hash = [](float n) { return fmodf(sinf(n) * 43758.5453f, 1.0f); };
