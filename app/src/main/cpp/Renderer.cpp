@@ -24,9 +24,10 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     isThirdPerson = tp; 
     cameraZoom = std::clamp(zoom, 2.0f, 40.0f);
     
-    // CAMERA FIX: Treat lx and ly as small swipe deltas or joystick axes, NOT absolute screen pixels
     float sensitivity = 0.25f; 
-    camYaw -= lx * sensitivity;
+    
+    // FIXED CAMERA INVERSION: Swiping right now looks right (Standard FPS)
+    camYaw += lx * sensitivity; 
     camPitch -= ly * sensitivity;
     
     camYaw = fmodf(camYaw, 360.0f);
@@ -152,8 +153,17 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     
-    // Smooth character movement exactly aligned with the ground
-    playerY = getElevation(playerX, playerZ);
+    // FIXED COLLISION: Sample 4 points representing the player's physical footprint
+    // This stops the edges of the character model from clipping into steep slopes.
+    float footprintSize = 0.5f; 
+    float hCenter = getElevation(playerX, playerZ);
+    float h1 = getElevation(playerX + footprintSize, playerZ + footprintSize);
+    float h2 = getElevation(playerX - footprintSize, playerZ + footprintSize);
+    float h3 = getElevation(playerX + footprintSize, playerZ - footprintSize);
+    float h4 = getElevation(playerX - footprintSize, playerZ - footprintSize);
+    
+    // The player stands on the highest piece of dirt under their feet
+    playerY = std::max({hCenter, h1, h2, h3, h4});
 
     float tX, tY, tZ;
     if (isThirdPerson) {
@@ -197,14 +207,13 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
 }
 
-// COLLISION FIX: Using smoothed 'uy' interpolation perfectly matches GPU shader math
 float GrassRenderer::getElevation(float x, float z) {
     auto hash = [](float n) { float f = sinf(n) * 43758.5453123f; return f - floorf(f); };
     auto noise = [&](float x, float y) {
         float ix = floorf(x), iy = floorf(y);
         float fx = x - ix, fy = y - iy;
         float ux = fx * fx * (3.0f - 2.0f * fx);
-        float uy = fy * fy * (3.0f - 2.0f * fy); // <- This was missing, causing the floating!
+        float uy = fy * fy * (3.0f - 2.0f * fy);
         
         float a = hash(ix + iy * 57.0f), b = hash(ix + 1.0f + iy * 57.0f);
         float c = hash(ix + (iy + 1.0f) * 57.0f), d = hash(ix + 1.0f + (iy + 1.0f) * 57.0f);
