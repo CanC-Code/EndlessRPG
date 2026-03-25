@@ -7,6 +7,10 @@
 
 #define LOG_TAG "GrassEngine"
 
+// Earth Dimensions in Meters
+const float EARTH_RADIUS = 6371000.0f;
+const float EARTH_CIRCUMFERENCE = 2.0f * M_PI * EARTH_RADIUS;
+
 GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainProgram(0), 
                                  ssbo(0), vao(0), vbo(0), 
                                  terrainVao(0), terrainVbo(0), terrainEbo(0), terrainIndexCount(0),
@@ -71,7 +75,7 @@ GLuint GrassRenderer::createComputeProgram(GLuint cShader) {
 
 void GrassRenderer::generateTerrainGrid() {
     const int gridSize = 200; 
-    const float size = 800.0f; // View distance 400m out. Gives exactly 4.0m per triangle grid!
+    const float size = 800.0f; 
     std::vector<float> vertices;
     std::vector<unsigned short> indices;
 
@@ -151,7 +155,10 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     
-    // Exactly matches the GPU Barycentric Triangle - no floating!
+    // Mathematically wrap coordinates to prevent integer overflow limits
+    playerX = fmodf(playerX, EARTH_CIRCUMFERENCE);
+    playerZ = fmodf(playerZ, EARTH_CIRCUMFERENCE);
+
     playerY = getElevation(playerX, playerZ);
 
     float tX, tY, tZ;
@@ -171,8 +178,10 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
 
     float proj[16], view[16], vp[16];
     buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1500.0f);
-    if (isThirdPerson) buildLookAt(view, camX, camY, camZ, playerX, playerY + 1.5f, playerZ);
-    else buildLookAt(view, camX, camY, camZ, camX + lookX, camY + lookY, camZ + lookZ);
+    
+    // Floating Origin approach: Visual world is locked around the camera to prevent Float32 precision loss
+    if (isThirdPerson) buildLookAt(view, 0.0f, camY, 0.0f, playerX - camX, playerY + 1.5f, playerZ - camZ);
+    else buildLookAt(view, 0.0f, camY, 0.0f, lookX, camY + lookY, lookZ);
     multiply(vp, proj, view);
 
     glUseProgram(computeProgram);
@@ -193,32 +202,56 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 7, GRASS_COUNT);
 
-    if (isThirdPerson) playerModel.render(vp, playerX, playerY, playerZ, camYaw);
+    // Player rendering offset for Floating Origin
+    if (isThirdPerson) playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, camYaw);
 }
 
+// FULL 3D PLANETARY SAMPLING
 float GrassRenderer::getElevation(float x, float z) {
-    auto hash = [](float n) { float f = sinf(n) * 43758.5453123f; return f - floorf(f); };
-    auto noise = [&](float x, float y) {
-        float ix = floorf(x), iy = floorf(y);
-        float fx = x - ix, fy = y - iy;
-        float ux = fx * fx * (3.0f - 2.0f * fx);
-        float uy = fy * fy * (3.0f - 2.0f * fy);
-        float a = hash(ix + iy * 57.0f), b = hash(ix + 1.0f + iy * 57.0f);
-        float c = hash(ix + (iy + 1.0f) * 57.0f), d = hash(ix + 1.0f + (iy + 1.0f) * 57.0f);
-        return a + (b-a)*ux + (c-a)*uy*(1.0f-ux) + (d-b)*uy*ux;
+    auto hash3 = [](float px, float py, float pz) {
+        float dt = px * 12.9898f + py * 78.233f + pz * 37.719f;
+        float f = sinf(dt) * 43758.5453f;
+        return f - floorf(f);
     };
     
-    auto exactElevation = [&](float px, float pz) {
-        // Soft rolling hills instead of sharp mountains
-        float h = noise(px * 0.01f, pz * 0.01f) * 30.0f + noise(px * 0.03f, pz * 0.03f) * 10.0f;
-        h += noise(px * 0.1f, pz * 0.1f) * 2.0f;
+    auto noise3 = [&](float px, float py, float pz) {
+        float ix = floorf(px), iy = floorf(py), iz = floorf(pz);
+        float fx = px - ix, fy = py - iy, fz = pz - iz;
+        float ux = fx * fx * (3.0f - 2.0f * fx);
+        float uy = fy * fy * (3.0f - 2.0f * fy);
+        float uz = fz * fz * (3.0f - 2.0f * fz);
+        
+        float a0 = hash3(ix, iy, iz), a1 = hash3(ix + 1.0f, iy, iz);
+        float a2 = hash3(ix, iy + 1.0f, iz), a3 = hash3(ix + 1.0f, iy + 1.0f, iz);
+        float a4 = hash3(ix, iy, iz + 1.0f), a5 = hash3(ix + 1.0f, iy, iz + 1.0f);
+        float a6 = hash3(ix, iy + 1.0f, iz + 1.0f), a7 = hash3(ix + 1.0f, iy + 1.0f, iz + 1.0f);
+        
+        float mx0 = a0 + (a1 - a0) * ux; float mx1 = a2 + (a3 - a2) * ux;
+        float mx2 = a4 + (a5 - a4) * ux; float mx3 = a6 + (a7 - a6) * ux;
+        float my0 = mx0 + (mx1 - mx0) * uy; float my1 = mx2 + (mx3 - mx2) * uy;
+        return my0 + (my1 - my0) * uz;
+    };
+
+    auto exactElevation = [&](float mapX, float mapZ) {
+        // Project 2D map coordinates into a 3D sphere coordinate
+        float lon = (mapX / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
+        float lat = (mapZ / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
+        
+        float sx = cosf(lat) * cosf(lon);
+        float sy = sinf(lat);
+        float sz = cosf(lat) * sinf(lon);
+        
+        // Scale the spherical coordinate up so hills form properly
+        float noiseScale = 4000.0f; 
+        
+        float h = noise3(sx * noiseScale * 0.01f, sy * noiseScale * 0.01f, sz * noiseScale * 0.01f) * 30.0f;
+        h += noise3(sx * noiseScale * 0.03f, sy * noiseScale * 0.03f, sz * noiseScale * 0.03f) * 10.0f;
         return h;
     };
 
-    float gridSpacing = 4.0f; // Perfect sync with GPU mesh
+    float gridSpacing = 4.0f; 
     float cellX = floorf(x / gridSpacing) * gridSpacing;
     float cellZ = floorf(z / gridSpacing) * gridSpacing;
-    
     float tx = (x - cellX) / gridSpacing;
     float tz = (z - cellZ) / gridSpacing;
     
