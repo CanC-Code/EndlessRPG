@@ -14,14 +14,14 @@ out vec3 v_Normal;
 out float v_ColorMix; 
 out float v_BladeHash; 
 out float v_IsWheat;
+out vec2 v_UV; // The blank canvas coordinate system for SDFs
 
 const float EARTH_RADIUS = 6371000.0;
 
 void main() {
     Blade b = blades[gl_InstanceID];
     
-    // 1. PHYSICAL ROOT EMBEDDING
-    // Push the root 5cm underground so it penetrates the dirt mesh instead of hovering
+    // Push the roots 5cm deep to seamlessly fuse with the terrain
     float elevation = b.pos.y - 0.05; 
 
     float distToCam = length(b.pos.xz - u_CameraPos.xz);
@@ -29,30 +29,30 @@ void main() {
     elevation -= curvatureDrop;
 
     v_BladeHash = fract(sin(b.pos.x * 12.9898 + b.pos.z * 78.233) * 43758.5453);
-    v_IsWheat = step(0.85, v_BladeHash); // 1.0 if this blade is a dead wheat stalk, 0.0 if normal grass
+    v_IsWheat = step(0.85, v_BladeHash); // 15% of the field is wheat
 
     float heightScale = mix(0.7, 1.5, v_BladeHash); 
-    float widthScale = mix(0.7, 1.3, fract(v_BladeHash * 10.0));
+    float hFactor = a_Pos.y / 1.4; // 0.0 (root) to 1.0 (tip)
+    
+    // UV Mapping: Recover the X axis from the vertex data (-1.0 to 1.0)
+    float uvX = (a_Pos.x < 0.0) ? -1.0 : (a_Pos.x > 0.0 ? 1.0 : 0.0);
+    v_UV = vec2(uvX, hFactor);
+
+    // Widen the canvas for wheat to give room to draw the seeds and awns
+    float physicalWidth = (v_IsWheat > 0.5) ? 0.12 : 0.04;
     
     vec3 worldPos = a_Pos;
-    worldPos.x *= widthScale; 
+    worldPos.x = uvX * physicalWidth; 
     worldPos.y *= heightScale; 
 
-    float hFactor = worldPos.y / (1.4 * heightScale); 
     float curve = hFactor * hFactor; 
 
-    // 2. PROCEDURAL TUBULAR FOLDING
-    // Fold the outer edges of the flat strip backward to create a U-shaped 3D cylinder
-    float edgeWidth = a_Pos.x * widthScale;
-    float foldDepth = (edgeWidth * edgeWidth) * 25.0; 
-    worldPos.z -= foldDepth; 
+    // Procedural Tubular Folding (Only for normal grass leaves)
+    if (v_IsWheat < 0.5) {
+        float foldDepth = (worldPos.x * worldPos.x) * 20.0; 
+        worldPos.z -= foldDepth; 
+    }
 
-    // 3. WHEAT HEAD GENERATION
-    // Bulge the top 30% of the wheat stalks to form thick seed heads
-    float wheatBulge = smoothstep(0.6, 0.8, hFactor) * (1.0 - smoothstep(0.95, 1.0, hFactor));
-    worldPos.x += sign(edgeWidth) * wheatBulge * 0.04 * v_IsWheat;
-
-    // Apply wind and trample to the folded structure
     worldPos.x += b.dir.x * curve; 
     worldPos.z += b.dir.z * curve;
     
@@ -75,9 +75,7 @@ void main() {
     v_WorldPos = worldPos;
     v_ColorMix = hFactor; 
     
-    // TUBULAR NORMALS: Splay the normals outward so light treats the flat polygon like a round pipe
-    vec3 localNormal = normalize(vec3(edgeWidth * 15.0, 0.2, 1.0));
-    v_Normal = localNormal; // (Simplified for performance, standard lighting will handle the rest)
+    v_Normal = normalize(vec3(worldPos.x * 10.0, 0.2, 1.0));
     
     vec3 localPos = vec3(worldPos.x - u_CameraPos.x, worldPos.y, worldPos.z - u_CameraPos.z);
     gl_Position = u_ViewProjection * vec4(localPos, 1.0);
