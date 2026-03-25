@@ -1,128 +1,35 @@
 #version 310 es
-precision highp float;
-
 layout(local_size_x = 16, local_size_y = 16) in;
 
-struct Blade { 
-    vec4 pos;  // x (worldX), y (world elevation), z (worldZ), w (plant scale)
-    vec4 wind; // x (windDirX), y (windDirZ), z (rotation angle), w (wind strength)
-};
+struct Blade { vec4 pos; vec4 dir; };
+layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
 
-layout(std430, binding = 0) buffer B { 
-    Blade blades[]; 
-};
-
-uniform float u_Time;
 uniform vec3 u_CameraPos;
+uniform float u_Time;
 
-float hash(vec2 p) { 
-    vec2 p2 = fract(p * vec2(5.3983, 5.4427));
-    p2 += dot(p2.yx, p2.xy + vec2(21.5351, 14.3137));
-    return fract(p2.x * p2.y * 95.4337);
-}
-
-float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
-               mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
-}
-
-float fbm(vec2 p) {
-    float f = 0.0;
-    float amp = 0.5;
-    for(int i = 0; i < 3; i++) {
-        f += amp * noise(p);
-        p *= 2.0;
-        amp *= 0.5;
-    }
-    return f;
-}
-
-// Generates the identical terrain height map to the ground mesh
-float getElevation(vec2 pos) {
-    float base = fbm(pos * 0.005);
-    float mountains = pow(fbm(pos * 0.015 + vec2(100.0)), 2.5) * 50.0;
-    float plateaus = smoothstep(0.4, 0.6, fbm(pos * 0.02)) * 12.0;
-    float hills = fbm(pos * 0.035) * 8.0;
-    float biomeMask = smoothstep(0.35, 0.65, base);
-    
-    float elevation = mix(plateaus + hills, mountains, biomeMask);
-    elevation += fbm(pos * 0.3) * 0.4; // Micro-details
-    
-    return elevation;
-}
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
 
 void main() {
-    uint x = gl_GlobalInvocationID.x;
-    uint y = gl_GlobalInvocationID.y;
-    uint idx = y * 512u + x; 
-    
-    float spacing = 0.08; 
-    float gridSize = 512.0 * spacing;
-    
-    vec2 camGridCenter = floor(u_CameraPos.xz / spacing) * spacing;
-    vec2 localPos = vec2(float(x), float(y)) * spacing - (gridSize * 0.5);
-    vec2 worldPos = camGridCenter + localPos;
-    
-    vec2 jitter = vec2(hash(worldPos * 13.3), hash(worldPos * 17.7)) * spacing * 1.5;
-    vec2 finalPos = worldPos + jitter;
-    
-    float elevation = getElevation(finalPos);
-    
-    // ==========================================
-    // --- HYPER-REALISTIC GROWTH & SURVIVAL ---
-    // ==========================================
-    
-    // 1. Calculate the physical steepness of the terrain (Slope)
-    float eps = 0.1;
-    float hL = getElevation(finalPos + vec2(-eps, 0.0));
-    float hR = getElevation(finalPos + vec2(eps, 0.0));
-    float hD = getElevation(finalPos + vec2(0.0, -eps));
-    float hU = getElevation(finalPos + vec2(0.0, eps));
-    
-    // Create a 3D normal vector to find the angle of the hill
-    vec3 normal = normalize(vec3(hL - hR, 2.0 * eps, hD - hU));
-    float slope = 1.0 - normal.y; // 0.0 is flat dirt, 1.0 is a vertical cliff
-    
-    // 2. Erosion Masking: Grass roots cannot hold onto steep rock faces.
-    // It will only grow on the flat "dirt and dust" layers, leaving cliffs exposed.
-    float slopeSurvival = 1.0 - smoothstep(0.20, 0.40, slope);
-    
-    // 3. Organic Root Clumping: Grass drops seeds in clusters, leaving dusty patches empty.
-    float rootCluster = smoothstep(0.2, 0.8, noise(finalPos * 2.5));
-    float microDensity = noise(finalPos * 12.0); // Tiny dense micro-tufts
-    float growthDensity = rootCluster * (0.4 + 0.6 * microDensity);
-    
-    // 4. Final Plant Scale
-    // If the plant is on a cliff or in a dead patch, scale hits 0.0 and the GPU instantly culls it!
-    float plantScale = (0.2 + (growthDensity * 1.3) + (hash(finalPos) * 0.4)) * slopeSurvival;
-    
-    float rot = hash(finalPos * 23.1) * 6.2831853;
-    
-    // --- Global Fluid Wind ---
-    vec2 baseWindDir = normalize(vec2(1.0, 0.6));
-    float windSpeed = 3.5;
-    vec2 windScroll = baseWindDir * (u_Time * windSpeed);
-    
-    float macroGust = fbm((finalPos - windScroll) * 0.04);
-    float microTurbulence = fbm((finalPos - windScroll * 1.5) * 0.15);
-    float gustIntensity = smoothstep(0.3, 0.7, macroGust);
-    float finalWindStrength = (gustIntensity * 0.8) + (microTurbulence * 0.3);
-    
-    float wave = sin(dot(finalPos, baseWindDir) * 0.15 - u_Time * 4.0) * 0.5 + 0.5;
-    finalWindStrength *= (0.4 + wave * 0.8);
+    uint index = gl_GlobalInvocationID.y * 512u + gl_GlobalInvocationID.x;
+    if (index >= 262144u) return;
 
-    float swirlAngle = (microTurbulence - 0.5) * 1.2; 
-    float cosA = cos(swirlAngle);
-    float sinA = sin(swirlAngle);
-    vec2 finalWindDir = vec2(
-        baseWindDir.x * cosA - baseWindDir.y * sinA,
-        baseWindDir.x * sinA + baseWindDir.y * cosA
-    );
+    float spacing = 0.4; // Grass covers a ~200m radius
+    
+    // Snap to grid so grass feels anchored to the ground as camera moves
+    float snappedCamX = floor(u_CameraPos.x / spacing) * spacing;
+    float snappedCamZ = floor(u_CameraPos.z / spacing) * spacing;
 
-    // Output to SSBO
-    blades[idx].pos = vec4(finalPos.x, elevation, finalPos.y, plantScale);
-    blades[idx].wind = vec4(finalWindDir.x, finalWindDir.y, rot, finalWindStrength); 
+    float startX = snappedCamX - (512.0 * spacing / 2.0);
+    float startZ = snappedCamZ - (512.0 * spacing / 2.0);
+
+    float x = startX + float(gl_GlobalInvocationID.x) * spacing;
+    float z = startZ + float(gl_GlobalInvocationID.y) * spacing;
+
+    x += (hash(vec2(x, z)) - 0.5) * spacing * 0.8;
+    z += (hash(vec2(z, x)) - 0.5) * spacing * 0.8;
+
+    float wind = sin(u_Time * 1.5 + x * 0.1 + z * 0.1) * 0.2;
+    
+    blades[index].pos = vec4(x, 0.0, z, 1.0);
+    blades[index].dir = vec4(wind, 1.0, wind, 0.0);
 }
