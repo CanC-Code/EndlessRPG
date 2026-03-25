@@ -26,14 +26,14 @@ float getElevation(vec2 p) {
 }
 
 void main() {
-    // Snap grid to camera (Infinite terrain effect)
-    vec2 worldXZ = a_XZ + floor(u_CameraPos.xz);
+    // FIXED: Must snap by exactly 6.0 to prevent warping
+    vec2 camSnap = floor(u_CameraPos.xz / 6.0) * 6.0;
+    vec2 worldXZ = a_XZ + camSnap;
     float y = getElevation(worldXZ);
     
     v_WorldPos = vec3(worldXZ.x, y, worldXZ.y);
     v_Elevation = y;
 
-    // Calculate normal for realistic lighting
     float eps = 1.0;
     float hL = getElevation(worldXZ - vec2(eps, 0.0));
     float hR = getElevation(worldXZ + vec2(eps, 0.0));
