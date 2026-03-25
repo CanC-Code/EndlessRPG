@@ -1,37 +1,45 @@
 #version 310 es
 precision highp float;
-
 layout(location = 0) in vec2 a_XZ;
 
 uniform mat4 u_ViewProjection;
 uniform vec3 u_CameraPos;
 
 out vec3 v_WorldPos;
+out vec3 v_Normal;
 out float v_Elevation;
 
-// --- NOISE FUNCTIONS (Simplified FBM for vertex) ---
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float hash(float n) { return fract(sin(n) * 43758.5453123); }
 float noise(vec2 p) {
     vec2 i = floor(p); vec2 f = fract(p);
     vec2 u = f*f*(3.0-2.0*f);
-    return mix(mix(hash(i + vec2(0,0)), hash(i + vec2(1,0)), u.x),
-               mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), u.x), u.y);
+    float a = hash(i.x + i.y * 57.0);
+    float b = hash(i.x + 1.0 + i.y * 57.0);
+    float c = hash(i.x + (i.y + 1.0) * 57.0);
+    float d = hash(i.x + 1.0 + (i.y + 1.0) * 57.0);
+    return a + (b-a)*u.x + (c-a)*u.y*(1.0-u.x) + (d-b)*u.y*u.x;
 }
-
 float getElevation(vec2 p) {
-    // This MUST match your Renderer.cpp getElevation exactly
-    float h = noise(p * 0.035) * 8.0; 
-    h += pow(noise(p * 0.015 + 100.0), 2.5) * 50.0 * smoothstep(0.35, 0.65, noise(p * 0.005));
+    float h = noise(p * 0.05) * 5.0 + noise(p * 0.1) * 2.0;
+    h += pow(noise(p * 0.01), 2.0) * 80.0;
     return h;
 }
 
 void main() {
-    // Snapping the grid to the camera to create "Infinite" terrain
+    // Snap grid to camera (Infinite terrain effect)
     vec2 worldXZ = a_XZ + floor(u_CameraPos.xz);
-    float elevation = getElevation(worldXZ);
+    float y = getElevation(worldXZ);
     
-    v_WorldPos = vec3(worldXZ.x, elevation, worldXZ.y);
-    v_Elevation = elevation;
-    
+    v_WorldPos = vec3(worldXZ.x, y, worldXZ.y);
+    v_Elevation = y;
+
+    // Calculate normal for realistic lighting
+    float eps = 1.0;
+    float hL = getElevation(worldXZ - vec2(eps, 0.0));
+    float hR = getElevation(worldXZ + vec2(eps, 0.0));
+    float hD = getElevation(worldXZ - vec2(0.0, eps));
+    float hU = getElevation(worldXZ + vec2(0.0, eps));
+    v_Normal = normalize(vec3(hL - hR, 2.0 * eps, hD - hU));
+
     gl_Position = u_ViewProjection * vec4(v_WorldPos, 1.0);
 }
