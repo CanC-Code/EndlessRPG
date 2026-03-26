@@ -26,11 +26,8 @@ private:
     int terrainIndexCount;
 
     Character playerModel;
-
-    float playerX, playerY, playerZ;
-    float playerYaw; // NEW: Independent body rotation
-    float camX, camY, camZ;
-    float camYaw, camPitch;
+    float playerX, playerY, playerZ, playerYaw; // Tracking body rotation
+    float camX, camY, camZ, camYaw, camPitch;
     float moveX, moveY;
     bool isThirdPerson;
     float cameraZoom;
