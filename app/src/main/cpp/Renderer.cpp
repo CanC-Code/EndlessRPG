@@ -15,7 +15,7 @@ const float EARTH_CIRCUMFERENCE = 2.0f * M_PI * EARTH_RADIUS;
 GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainProgram(0), 
                                  ssbo(0), vao(0), vbo(0), 
                                  terrainVao(0), terrainVbo(0), terrainEbo(0), terrainIndexCount(0),
-                                 playerX(0.0f), playerY(0.0f), playerZ(0.0f),
+                                 playerX(0.0f), playerY(0.0f), playerZ(0.0f), playerYaw(0.0f),
                                  camX(0.0f), camY(1.8f), camZ(0.0f),
                                  camYaw(-90.0f), camPitch(0.0f),
                                  moveX(0.0f), moveY(0.0f),
@@ -126,7 +126,8 @@ void GrassRenderer::init() {
     glBufferData(GL_SHADER_STORAGE_BUFFER, GRASS_COUNT * 8 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 
-    // FIXED: Perfect 8-Vertex Rectangular Strip
+    // PHOTOGRAPHIC FIX: Uniform 8-vertex Quad strip ensures SDF shaders have 
+    // a non-collapsing coordinate system for high-detail seed heads.
     float blade[] = { 
         -0.05f, 0.00f, 0.0f,   0.05f, 0.00f, 0.0f, 
         -0.05f, 0.46f, 0.0f,   0.05f, 0.46f, 0.0f, 
@@ -173,12 +174,21 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float fwdX = cosf(yawRad), fwdZ = sinf(yawRad);
     float rgtX = cosf(yawRad + M_PI / 2.0f), rgtZ = sinf(yawRad + M_PI / 2.0f);
 
+    // Update Player Position
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     
     playerX = fmodf(playerX, EARTH_CIRCUMFERENCE);
     playerZ = fmodf(playerZ, EARTH_CIRCUMFERENCE);
     playerY = getElevation(playerX, playerZ);
+
+    // --- CHARACTER DIRECTION LOGIC ---
+    // Calculates rotation based on input vector relative to the camera
+    if (moveX != 0.0f || moveY != 0.0f) {
+        float targetYaw = camYaw + atan2f(moveX, -moveY) * (180.0f / M_PI);
+        float diff = fmodf(targetYaw - playerYaw + 540.0f, 360.0f) - 180.0f;
+        playerYaw += diff * 12.0f * dtSafe; // 12.0 is the turning speed
+    }
 
     float tX, tY, tZ;
     if (isThirdPerson) {
@@ -220,10 +230,10 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glUniform3f(glGetUniformLocation(renderProgram, "u_CameraPos"), camX, camY, camZ);
     glUniform3f(glGetUniformLocation(renderProgram, "u_PlayerPos"), playerX, playerY, playerZ);
     glBindVertexArray(vao);
-    // FIXED: Draws all 8 vertices of the square billboard
+    // Draw using the full 8-vertex rectangular strip
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 8, GRASS_COUNT);
 
-    if (isThirdPerson) playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, camYaw);
+    if (isThirdPerson) playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, playerYaw);
 }
 
 float GrassRenderer::getElevation(float x, float z) {
