@@ -174,7 +174,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float fwdX = cosf(yawRad), fwdZ = sinf(yawRad);
     float rgtX = cosf(yawRad + M_PI / 2.0f), rgtZ = sinf(yawRad + M_PI / 2.0f);
 
-    // Update Player Position
+    // Biomechanical Pace Alignment: Update World Position
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     
@@ -182,14 +182,14 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerZ = fmodf(playerZ, EARTH_CIRCUMFERENCE);
     playerY = getElevation(playerX, playerZ);
 
-    // --- CHARACTER DIRECTION LOGIC ---
-    // Calculates rotation based on input vector relative to the camera
+    // Directional Rotation Logic: Character turns to face the walking vector
     if (moveX != 0.0f || moveY != 0.0f) {
         float targetYaw = camYaw + atan2f(moveX, -moveY) * (180.0f / M_PI);
         float diff = fmodf(targetYaw - playerYaw + 540.0f, 360.0f) - 180.0f;
-        playerYaw += diff * 12.0f * dtSafe; // 12.0 is the turning speed
+        playerYaw += diff * 12.0f * dtSafe; 
     }
 
+    // Camera Smoothing and Zoom Logic
     float tX, tY, tZ;
     if (isThirdPerson) {
         tX = playerX - (lookX * cameraZoom);
@@ -208,16 +208,19 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float proj[16], view[16], vp[16];
     buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1500.0f);
     
+    // LookAt matrix creates the view transformation
     if (isThirdPerson) buildLookAt(view, 0.0f, camY, 0.0f, playerX - camX, playerY + 1.5f, playerZ - camZ);
     else buildLookAt(view, 0.0f, camY, 0.0f, lookX, camY + lookY, lookZ);
     multiply(vp, proj, view);
 
+    // Procedural Compute Pass for Wheat/Grass animation
     glUseProgram(computeProgram);
     glUniform1f(glGetUniformLocation(computeProgram, "u_Time"), time);
     glUniform3f(glGetUniformLocation(computeProgram, "u_CameraPos"), camX, camY, camZ);
     glDispatchCompute(32, 32, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
+    // Terrain Rendering Pass
     glUseProgram(terrainProgram);
     glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), camX, camY, camZ);
@@ -225,15 +228,19 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glBindVertexArray(terrainVao);
     glDrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_SHORT, 0);
 
+    // Foliage Rendering Pass (Instanced Drawing)
     glUseProgram(renderProgram);
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(renderProgram, "u_CameraPos"), camX, camY, camZ);
     glUniform3f(glGetUniformLocation(renderProgram, "u_PlayerPos"), playerX, playerY, playerZ);
     glBindVertexArray(vao);
-    // Draw using the full 8-vertex rectangular strip
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 8, GRASS_COUNT);
 
-    if (isThirdPerson) playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, playerYaw);
+    // FIXED: Character Render Call (Resolves Ninja build error)
+    // Now passes 7 arguments: vp, local_x, local_y, local_z, yaw, world_camera_x, world_camera_z
+    if (isThirdPerson) {
+        playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, playerYaw, camX, camZ);
+    }
 }
 
 float GrassRenderer::getElevation(float x, float z) {
@@ -242,19 +249,19 @@ float GrassRenderer::getElevation(float x, float z) {
         float f = sinf(dt) * 43758.5453f;
         return f - floorf(f);
     };
-    
+
     auto noise3 = [&](float px, float py, float pz) {
         float ix = floorf(px), iy = floorf(py), iz = floorf(pz);
         float fx = px - ix, fy = py - iy, fz = pz - iz;
         float ux = fx * fx * (3.0f - 2.0f * fx);
         float uy = fy * fy * (3.0f - 2.0f * fy);
         float uz = fz * fz * (3.0f - 2.0f * fz);
-        
+
         float a0 = hash3(ix, iy, iz), a1 = hash3(ix + 1.0f, iy, iz);
         float a2 = hash3(ix, iy + 1.0f, iz), a3 = hash3(ix + 1.0f, iy + 1.0f, iz);
         float a4 = hash3(ix, iy, iz + 1.0f), a5 = hash3(ix + 1.0f, iy, iz + 1.0f);
         float a6 = hash3(ix, iy + 1.0f, iz + 1.0f), a7 = hash3(ix + 1.0f, iy + 1.0f, iz + 1.0f);
-        
+
         float mx0 = a0 + (a1 - a0) * ux; float mx1 = a2 + (a3 - a2) * ux;
         float mx2 = a4 + (a5 - a4) * ux; float mx3 = a6 + (a7 - a6) * ux;
         float my0 = mx0 + (mx1 - mx0) * uy; float my1 = mx2 + (mx3 - mx2) * uy;
@@ -264,13 +271,8 @@ float GrassRenderer::getElevation(float x, float z) {
     auto exactElevation = [&](float mapX, float mapZ) {
         float lon = (mapX / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
         float lat = (mapZ / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
-        
-        float sx = cosf(lat) * cosf(lon);
-        float sy = sinf(lat);
-        float sz = cosf(lat) * sinf(lon);
-        
+        float sx = cosf(lat) * cosf(lon), sy = sinf(lat), sz = cosf(lat) * sinf(lon);
         float noiseScale = 4000.0f; 
-        
         float h = noise3(sx * noiseScale * 0.01f, sy * noiseScale * 0.01f, sz * noiseScale * 0.01f) * 30.0f;
         h += noise3(sx * noiseScale * 0.03f, sy * noiseScale * 0.03f, sz * noiseScale * 0.03f) * 10.0f;
         return h;
@@ -281,12 +283,10 @@ float GrassRenderer::getElevation(float x, float z) {
     float cellZ = floorf(z / gridSpacing) * gridSpacing;
     float tx = (x - cellX) / gridSpacing;
     float tz = (z - cellZ) / gridSpacing;
-    
     float h00 = exactElevation(cellX, cellZ);
     float h10 = exactElevation(cellX + gridSpacing, cellZ);
     float h01 = exactElevation(cellX, cellZ + gridSpacing);
     float h11 = exactElevation(cellX + gridSpacing, cellZ + gridSpacing);
-    
     if (tx + tz <= 1.0f) return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
     else return h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
 }
@@ -302,16 +302,12 @@ void GrassRenderer::buildLookAt(float* m, float ex, float ey, float ez, float cx
     float flen = sqrtf(f[0]*f[0] + f[1]*f[1] + f[2]*f[2]);
     if (flen < 0.00001f) flen = 0.00001f;
     f[0] /= flen; f[1] /= flen; f[2] /= flen;
-    
     float up[3] = {0.0f, 1.0f, 0.0f};
-    
     float s[3] = { f[1]*up[2] - f[2]*up[1], f[2]*up[0] - f[0]*up[2], f[0]*up[1] - f[1]*up[0] };
     float slen = sqrtf(s[0]*s[0] + s[1]*s[1] + s[2]*s[2]);
     if (slen < 0.00001f) { s[0] = 1.0f; s[1] = 0.0f; s[2] = 0.0f; } 
     else { s[0] /= slen; s[1] /= slen; s[2] /= slen; }
-    
     float u[3] = { s[1]*f[2] - s[2]*f[1], s[2]*f[0] - s[0]*f[2], s[0]*f[1] - s[1]*f[0] };
-    
     m[0] = s[0];  m[1] = u[0];  m[2] = -f[0]; m[3] = 0.0f;
     m[4] = s[1];  m[5] = u[1];  m[6] = -f[1]; m[7] = 0.0f;
     m[8] = s[2];  m[9] = u[2];  m[10] = -f[2]; m[11] = 0.0f;
