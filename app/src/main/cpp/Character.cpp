@@ -3,7 +3,6 @@
 #include <cmath>
 #include <algorithm>
 
-// --- BIOMECHANICAL SHADERS ---
 const char* charVertShader = R"(#version 310 es
 layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNorm;
@@ -16,7 +15,6 @@ out vec3 vWorldPos;
 
 void main() {
     vec3 taperedPos = aPos;
-    // Apply tapering: mix between start radius (bottom) and end radius (top)
     float taperFactor = mix(uTaperStart, uTaperEnd, aPos.y + 0.5);
     taperedPos.xz *= taperFactor;
 
@@ -41,14 +39,15 @@ void main() {
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
 
     float diff = max(dot(norm, lightDir), 0.0);
-    float ambient = 0.25;
+    float ambient = 0.3;
     
-    // RIM LIGHT / SSS Approximation
+    // Subsurface Scattering (SSS) for organic light bleed
     float rim = pow(1.0 - max(dot(viewDir, norm), 0.0), 3.0);
-    vec3 sssColor = vec3(1.0, 0.4, 0.3) * rim * 0.3;
+    vec3 sssColor = vec3(1.0, 0.4, 0.3) * rim * 0.35;
     
+    // Anisotropic-like Specular Highlight
     vec3 halfDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(norm, halfDir), 0.0), 40.0) * 0.3;
+    float spec = pow(max(dot(norm, halfDir), 0.0), 32.0) * 0.25;
 
     FragColor = vec4(uColor * (diff + ambient) + sssColor + vec3(spec), 1.0);
 }
@@ -56,7 +55,7 @@ void main() {
 
 int segmentVertexCount = 0;
 
-Character::Character() : vao(0), vbo(0), program(0), lastX(0), lastZ(0), 
+Character::Character() : vao(0), vbo(0), program(0), lastX(0), lastY(0), lastZ(0), 
                          walkPhase(0), swingAmplitude(0), leanAngle(0), bankAngle(0) {}
 
 void Character::init() {
@@ -91,36 +90,42 @@ void Character::init() {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)(3*sizeof(float))); glEnableVertexAttribArray(1);
 }
 
-void Character::render(const float* vp, float x, float y, float z, float yaw, float cameraX, float cameraZ) {
+void Character::render(const float* vp, float x, float y, float z, float yaw, float pitch, float roll, float cameraX, float cameraZ) {
     if (!program) return;
     glUseProgram(program);
     glUniform3f(glGetUniformLocation(program, "uCameraPos"), cameraX, 1.8f, cameraZ);
 
-    float dx = x - lastX, dz = z - lastZ;
-    float dist = sqrtf(dx*dx + dz*dz);
-    float speed = dist / 0.016f;
-    lastX = x; lastZ = z;
+    // True 3D Displacement Pacing (Accounts for uphill/downhill travel distances)
+    float dx = x - lastX;
+    float dy = y - lastY;
+    float dz = z - lastZ;
+    float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+    lastX = x; lastY = y; lastZ = z;
 
-    if (dist > 0.001f) {
-        walkPhase += speed * 0.8f;
+    if (dist > 0.0001f) {
+        walkPhase += dist * 12.0f; // Perfect biomechanical stride scale
         swingAmplitude = std::min(1.0f, swingAmplitude + 0.15f);
-        leanAngle = std::min(0.15f, speed * 0.04f);
+        leanAngle = std::min(0.2f, (dist / 0.016f) * 0.03f);
     } else {
         swingAmplitude *= 0.85f;
-        walkPhase *= 0.9f;
-        leanAngle *= 0.9f;
+        walkPhase += (0.0f - sinf(walkPhase)) * 0.1f; // Settle feet
+        leanAngle *= 0.85f;
     }
 
-    float hipSway = sinf(walkPhase) * 0.1f * swingAmplitude;
-    float shoulderSway = -sinf(walkPhase) * 0.15f * swingAmplitude;
-    float verticalBounce = cosf(walkPhase * 2.0f) * 0.045f * swingAmplitude;
+    float hipSway = sinf(walkPhase) * 0.12f * swingAmplitude;
+    float shoulderSway = -sinf(walkPhase) * 0.18f * swingAmplitude;
+    float verticalBounce = cosf(walkPhase * 2.0f) * 0.05f * swingAmplitude;
 
+    // ROOT HIERARCHY WITH TERRAIN ALIGNMENT
     float root[16]; makeIdentity(root);
     translateLocal(root, x, y + 0.95f + verticalBounce, z);
+    
+    // Apply spherical rotations sequentially: Yaw -> Pitch -> Roll
     rotateYLocal(root, yaw * (M_PI / 180.0f));
-    rotateXLocal(root, leanAngle);
+    rotateXLocal(root, pitch + leanAngle); // Slope pitch + velocity lean
+    rotateZLocal(root, roll);              // Slope roll
 
-    // UPPER BODY
+    // TORSO
     float torso[16]; copyMat(torso, root);
     translateLocal(torso, 0, 0.38f, 0);
     rotateYLocal(torso, shoulderSway);
@@ -129,16 +134,18 @@ void Character::render(const float* vp, float x, float y, float z, float yaw, fl
     scaleLocal(chestM, 0.44f, 0.62f, 0.28f);
     drawAnatomicalSegment(vp, chestM, 0.85f, 1.1f, 0.15f, 0.25f, 0.45f, cameraX, cameraZ);
 
+    // HEAD
     float headM[16]; copyMat(headM, torso);
     translateLocal(headM, 0, 0.45f, 0.03f);
-    scaleLocal(headM, 0.24f, 0.3f, 0.24f);
+    scaleLocal(headM, 0.22f, 0.28f, 0.22f);
     drawAnatomicalSegment(vp, headM, 0.95f, 0.95f, 0.85f, 0.7f, 0.6f, cameraX, cameraZ);
 
-    for (int i : {-1, 1}) { // Arms
+    // ARMS
+    for (int i : {-1, 1}) { 
         float armPhase = walkPhase + (i == 1 ? M_PI : 0);
         float shoulder[16]; copyMat(shoulder, torso);
         translateLocal(shoulder, i * 0.24f, 0.26f, 0); 
-        rotateXLocal(shoulder, sinf(armPhase) * 0.55f * swingAmplitude);
+        rotateXLocal(shoulder, sinf(armPhase) * 0.6f * swingAmplitude);
         rotateZLocal(shoulder, i * 0.12f);
         
         float upperArm[16]; copyMat(upperArm, shoulder);
@@ -148,19 +155,20 @@ void Character::render(const float* vp, float x, float y, float z, float yaw, fl
 
         float elbow[16]; copyMat(elbow, shoulder);
         translateLocal(elbow, 0, -0.4f, 0);
-        rotateXLocal(elbow, -0.2f - std::abs(sinf(armPhase)) * 0.7f * swingAmplitude);
+        rotateXLocal(elbow, -0.1f - std::abs(sinf(armPhase)) * 0.8f * swingAmplitude);
         float forearm[16]; copyMat(forearm, elbow);
         translateLocal(forearm, 0, -0.18f, 0);
         scaleLocal(forearm, 0.09f, 0.38f, 0.09f);
         drawAnatomicalSegment(vp, forearm, 0.7f, 1.0f, 0.85f, 0.7f, 0.6f, cameraX, cameraZ);
     }
 
-    for (int i : {-1, 1}) { // Legs
+    // LEGS
+    for (int i : {-1, 1}) { 
         float legPhase = walkPhase + (i == 1 ? 0 : M_PI);
         float hip[16]; copyMat(hip, root);
         translateLocal(hip, i * 0.14f, 0, 0);
         rotateYLocal(hip, hipSway * -i);
-        rotateXLocal(hip, sinf(legPhase) * 0.6f * swingAmplitude);
+        rotateXLocal(hip, sinf(legPhase) * 0.65f * swingAmplitude);
 
         float thigh[16]; copyMat(thigh, hip);
         translateLocal(thigh, 0, -0.25f, 0);
@@ -169,10 +177,10 @@ void Character::render(const float* vp, float x, float y, float z, float yaw, fl
 
         float knee[16]; copyMat(knee, hip);
         translateLocal(knee, 0, -0.52f, 0); 
-        rotateXLocal(knee, std::max(0.0f, sinf(legPhase - 0.5f)) * 1.3f * swingAmplitude);
+        rotateXLocal(knee, std::max(0.0f, sinf(legPhase - 0.5f)) * 1.4f * swingAmplitude);
         float calf[16]; copyMat(calf, knee);
         translateLocal(calf, 0, -0.24f, 0);
-        scaleLocal(calf, 0.15f, 0.52f, 0.15f);
+        scaleLocal(calf, 0.14f, 0.52f, 0.14f);
         drawAnatomicalSegment(vp, calf, 0.6f, 1.1f, 0.15f, 0.15f, 0.18f, cameraX, cameraZ);
     }
 }
@@ -184,12 +192,11 @@ void Character::drawAnatomicalSegment(const float* vp, const float* model, float
     glUniform3f(glGetUniformLocation(program, "uColor"), colorR, colorG, colorB);
     glUniform1f(glGetUniformLocation(program, "uTaperStart"), rStart);
     glUniform1f(glGetUniformLocation(program, "uTaperEnd"), rEnd);
-    glUniform3f(glGetUniformLocation(program, "uCameraPos"), camX, 1.8f, camZ);
     glBindVertexArray(vao);
     glDrawArrays(GL_TRIANGLES, 0, segmentVertexCount);
 }
 
-// Full Matrix Helpers
+// Matrix Utility Implementations
 void Character::makeIdentity(float* m) { for(int i=0; i<16; i++) m[i]=(i%5==0)?1.f:0.f; }
 void Character::copyMat(float* d, const float* s) { for(int i=0; i<16; i++) d[i]=s[i]; }
 void Character::matMul(float* o, const float* a, const float* b) {
