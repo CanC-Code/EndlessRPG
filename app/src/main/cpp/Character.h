@@ -1,23 +1,33 @@
 #pragma once
 #include <GLES3/gl31.h>
-#include <vector>
-
-struct CharacterVertex {
-    float x, y, z;
-    float nx, ny, nz; // Normals for lighting
-};
+#include <cmath>
+#include <algorithm>
 
 class Character {
 public:
     Character();
     void init();
-    void render(const float* viewProjection, float playerX, float playerY, float playerZ, float yaw);
+    // Dynamically infers walking animation based on positional changes
+    void render(const float* vp, float x, float y, float z, float yaw);
 
 private:
-    GLuint program;
-    GLuint vao, vbo;
-    int vertexCount;
+    GLuint vao, vbo, program;
+    
+    // Animation Tracking
+    float lastX, lastZ;
+    float walkPhase;
+    float swingAmplitude;
 
-    GLuint compileShader(GLenum type, const char* source);
-    GLuint createProgram(const char* vSrc, const char* fSrc);
+    // Matrix Math Utilities for Hierarchical Bones
+    void makeIdentity(float* m);
+    void matMul(float* out, const float* a, const float* b);
+    void copyMat(float* dst, const float* src);
+    void translateLocal(float* m, float x, float y, float z);
+    void rotateXLocal(float* m, float angleRad);
+    void rotateYLocal(float* m, float angleRad);
+    void rotateZLocal(float* m, float angleRad);
+    void scaleLocal(float* m, float x, float y, float z);
+
+    // Renders a single anatomical segment
+    void drawSegment(const float* vp, const float* model, float r, float g, float b);
 };
