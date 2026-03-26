@@ -8,6 +8,7 @@ in float v_ColorMix;
 in float v_BladeHash;
 in float v_IsWheat;
 in float v_Age; 
+in float v_Height;
 in vec2 v_UV; 
 
 out vec4 FragColor;
@@ -22,51 +23,51 @@ void main() {
     float anatomyMask = 0.0;
     vec3 albedo;
     
-    // Dynamic Life-Cycle Colors
-    vec3 youngGreen = vec3(0.25, 0.55, 0.12);
-    vec3 ripeGold   = vec3(0.75, 0.60, 0.25);
-    vec3 deadBrown  = vec3(0.50, 0.40, 0.20);
+    vec3 youngGreen = vec3(0.28, 0.58, 0.15);
+    vec3 ripeGold   = vec3(0.78, 0.62, 0.22);
+    vec3 deadBrown  = vec3(0.55, 0.45, 0.25);
     
-    // The base color shifts depending on the age of this specific plant
     vec3 wheatColor = mix(youngGreen, mix(ripeGold, deadBrown, smoothstep(0.8, 1.0, v_Age)), v_Age);
 
     if (v_IsWheat > 0.5) {
-        // STEM (Thickens slightly as it grows)
-        float stemWidth = mix(0.03, 0.05, v_Age); 
+        // 1. THE STEM (Very thin, realistic radius)
+        float stemWidth = mix(0.04, 0.08, v_Age); 
         float isStem = 1.0 - smoothstep(stemWidth - 0.02, stemWidth, absX);
 
-        // LEAF (Flag Leaf drooping down)
-        float leafArc = absX - pow(max(0.0, y - 0.3), 0.5) * mix(1.0, 2.5, v_Age); // Droops more with age
+        // 2. FLAG LEAVES (Arching naturally away from the stem)
+        float leafArc = absX - pow(max(0.0, y - 0.3), 0.5) * mix(1.0, 2.5, v_Age); 
         float isLeaf = (1.0 - smoothstep(0.0, 0.06, abs(leafArc))) * smoothstep(0.3, 0.6, y);
 
-        // SPIKELETS & KERNELS (Anatomically correct overlapping seeds)
+        // 3. SPIKELETS (Strictly proportioned to the top 13% of the plant!)
         float isSpike = 0.0;
         float isAwn = 0.0;
         
-        if (y > 0.55) {
-            float localY = (y - 0.55) / 0.45; // 0.0 to 1.0 along the seed head
-            float rows = 14.0;
+        if (y > 0.82 && y < 0.95) {
+            float localY = (y - 0.82) / 0.13; // Normalize 0 to 1 along the seed head
+            float rows = 16.0;
             float rowId = floor(localY * rows);
             float stagger = mod(rowId, 2.0) * 2.0 - 1.0; 
             
             vec2 cellUV = vec2(x * 2.5, fract(localY * rows));
             
-            // Plumpness: Kernels swell dramatically as the wheat matures
-            float kernelFatness = mix(0.12, 0.35, v_Age);
+            // As the plant ages, the kernels physically swell outward, creating plump grain
+            float kernelFatness = mix(0.1, 0.45, v_Age);
             
-            // Perfect teardrop seed shape
             float d = length(vec2(cellUV.x - stagger * kernelFatness, cellUV.y - 0.5));
-            float seed = 1.0 - smoothstep(0.2, 0.35, d);
+            float seed = 1.0 - smoothstep(0.2, 0.4, d);
             
             float headTaper = sin(localY * 3.1415); 
-            isSpike = seed * smoothstep(0.0, 0.2, headTaper - absX * 0.5);
+            isSpike = seed * smoothstep(0.0, 0.25, headTaper - absX * 0.4);
+        }
+
+        // 4. AWNS (Bristles that shoot out of the head and extend past the top)
+        if (y > 0.82) {
+            float awnSplay = mix(10.0, 35.0, v_Age); 
+            float awnLines = smoothstep(0.9, 1.0, sin(x * awnSplay + y * 60.0)) + 
+                             smoothstep(0.9, 1.0, sin(x * -awnSplay + y * 60.0));
             
-            // AWNS (Bristles that shoot out from the tips of the kernels)
-            // They splay outward as the kernels get fat
-            float awnSplay = mix(15.0, 30.0, v_Age); 
-            float awnLines = smoothstep(0.95, 1.0, sin(x * awnSplay + y * 30.0)) + 
-                             smoothstep(0.95, 1.0, sin(x * -awnSplay + y * 30.0));
-            isAwn = awnLines * smoothstep(0.6, 1.0, y) * (1.0 - smoothstep(0.0, 0.9, absX));
+            // Fades out exactly at y=1.0 to prevent jarring geometry clipping
+            isAwn = awnLines * (1.0 - smoothstep(0.0, 0.8, absX)) * (1.0 - smoothstep(0.96, 1.0, y));
         }
 
         anatomyMask = max(max(isStem, isLeaf), isSpike);
@@ -76,37 +77,37 @@ void main() {
 
         albedo = wheatColor;
         
-        // Deep ambient occlusion in the crevices of the swollen seeds
-        if (y > 0.55 && isSpike > 0.0) {
-            float seedCrevice = fract((y - 0.55) / 0.45 * 14.0);
+        // Deep seed crevices
+        if (y > 0.82 && y < 0.95 && isSpike > 0.0) {
+            float seedCrevice = fract((y - 0.82) / 0.13 * 16.0);
             albedo *= mix(0.3, 1.0, smoothstep(0.0, 0.4, seedCrevice));
         }
 
     } else {
-        // NORMAL GRASS (Also affected by the maturity patch noise)
-        float bladeWidth = 1.0 - pow(y, 1.2); 
+        float bladeWidth = 1.0 - pow(y, 1.5); 
         if (absX > bladeWidth) discard; 
 
         vec3 grassGreen = mix(vec3(0.25, 0.55, 0.12), vec3(0.35, 0.60, 0.10), v_BladeHash);
-        // Grass turns slightly yellow/dry in mature patches
         albedo = mix(grassGreen, vec3(0.6, 0.6, 0.3), v_Age * 0.7); 
         
         float midrib = 1.0 - smoothstep(0.0, 0.1, absX);
         albedo = mix(albedo, albedo * 1.4, midrib * 0.5);
     }
 
-    // --- PBR RENDERING ---
-
-    // DIRT COLLAR (Mud fusion)
+    // --- ABSOLUTE MUD COLLAR (Physical Grounding) ---
+    // Instead of using a percentage, we use the absolute height in meters.
+    // This ensures exactly 8 centimeters of mud covers the base, whether the plant is a baby or 4 feet tall.
+    float absoluteY = y * v_Height;
+    float dirtCollar = 1.0 - smoothstep(0.0, 0.08, absoluteY); 
+    
     vec3 dirtColor = vec3(0.18, 0.14, 0.10);
-    float dirtCollar = 1.0 - smoothstep(0.0, 0.12, y); 
     albedo = mix(albedo, dirtColor, dirtCollar);
-    albedo *= mix(0.05, 1.0, pow(y, 0.5)); // Deep root shadowing
+    albedo *= mix(0.05, 1.0, pow(y, 0.5)); // 95% black at the deep roots
 
+    // --- PBR RENDERING ---
     vec3 lightDir = normalize(vec3(0.5, 0.8, 0.3));
     vec3 viewDir = normalize(u_CameraPos - v_WorldPos);
     
-    // ANISOTROPIC LIGHTING (Fibrous Hair Shading)
     float TdotL = dot(v_Tangent, lightDir);
     float TdotV = dot(v_Tangent, viewDir);
     float sinTHL = sqrt(1.0 - TdotL * TdotL);
@@ -115,12 +116,9 @@ void main() {
     float dirAtten = smoothstep(-1.0, 0.0, TdotL * TdotV);
     float anisoSpec = pow(max(sinTHL * sinTHV - TdotL * TdotV, 0.0), 16.0) * dirAtten;
     
-    // Specularity physics: Young plants are waxy/shiny. Mature/dead plants are matte/dry.
     float specIntensity = mix(0.25, 0.02, v_Age); 
     vec3 specular = vec3(1.0, 0.95, 0.85) * anisoSpec * specIntensity * y; 
 
-    // SUBSURFACE SCATTERING (Translucency)
-    // Young green leaves scatter lots of light. Dry golden kernels block it.
     float sssIntensity = mix(0.6, 0.1, v_Age);
     float backlight = max(dot(viewDir, -lightDir), 0.0);
     float scatter = pow(backlight, 3.0) * sssIntensity * y; 
