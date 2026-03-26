@@ -11,34 +11,47 @@ uniform vec3 u_PlayerPos;
 
 out vec3 v_WorldPos;
 out vec3 v_Normal;
-out vec3 v_Tangent; // NEW: Points UP the stalk for Anisotropic fiber lighting
+out vec3 v_Tangent; 
 out float v_ColorMix; 
 out float v_BladeHash; 
 out float v_IsWheat;
+out float v_Age; // NEW: The biological age of the plant
 out vec2 v_UV; 
 
 const float EARTH_RADIUS = 6371000.0;
 
+// Macro noise to group growth stages into natural geographical patches
+float macroHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+float macroNoise(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p); vec2 u = f*f*(3.0-2.0*f);
+    return mix(mix(macroHash(i), macroHash(i + vec2(1.0,0.0)), u.x),
+               mix(macroHash(i + vec2(0.0,1.0)), macroHash(i + vec2(1.0,1.0)), u.x), u.y);
+}
+
 void main() {
     Blade b = blades[gl_InstanceID];
     
-    // Sink the root deeply into the dirt to physically anchor it
+    // Physical Root Embedding
     float elevation = b.pos.y - 0.08; 
-
     float distToCam = length(b.pos.xz - u_CameraPos.xz);
-    float curvatureDrop = (distToCam * distToCam) / (2.0 * EARTH_RADIUS);
-    elevation -= curvatureDrop;
+    elevation -= (distToCam * distToCam) / (2.0 * EARTH_RADIUS);
 
     v_BladeHash = fract(sin(b.pos.x * 12.9898 + b.pos.z * 78.233) * 43758.5453);
-    v_IsWheat = step(0.85, v_BladeHash); 
+    v_IsWheat = step(0.80, v_BladeHash); // 20% Wheat
 
-    float heightScale = mix(0.7, 1.5, v_BladeHash); 
+    // BIOLOGICAL AGE (0.0 = Young/Green/Straight, 1.0 = Mature/Gold/Heavy)
+    // We blend large 50m patches with individual micro-variations
+    float patchAge = macroNoise(b.pos.xz * 0.02); 
+    v_Age = clamp(patchAge + (v_BladeHash * 0.4 - 0.2), 0.0, 1.0); 
+
+    float heightScale = mix(0.8, 1.6, v_BladeHash); 
     float hFactor = a_Pos.y / 1.4; 
     
     float uvX = (a_Pos.x < 0.0) ? -1.0 : (a_Pos.x > 0.0 ? 1.0 : 0.0);
     v_UV = vec2(uvX, hFactor);
 
-    float physicalWidth = (v_IsWheat > 0.5) ? 0.12 : 0.04;
+    // Widen canvas to support wide, drooping leaves and spreading awns
+    float physicalWidth = (v_IsWheat > 0.5) ? 0.16 : 0.05;
     
     vec3 worldPos = a_Pos;
     worldPos.x = uvX * physicalWidth; 
@@ -51,9 +64,19 @@ void main() {
         worldPos.z -= foldDepth; 
     }
 
-    // Calculate Tangent (Points up the blade, factoring in the wind/curve)
+    // --- HEAVY GRAIN DROOP PHYSICS ---
+    if (v_IsWheat > 0.5) {
+        // As wheat matures (v_Age -> 1.0), the top 40% gets incredibly heavy
+        float droopWeight = smoothstep(0.5, 1.0, hFactor) * v_Age;
+        
+        // Bend it forward heavily, imitating the iconic arched hook of ripe wheat
+        worldPos.x += sign(b.dir.x + 0.001) * droopWeight * 0.6;
+        worldPos.y -= droopWeight * 0.4; // Pull the head down physically
+    }
+
     v_Tangent = normalize(vec3(b.dir.x * 2.0 * hFactor, 1.0, b.dir.z * 2.0 * hFactor));
 
+    // Wind and Trample
     worldPos.x += b.dir.x * curve; 
     worldPos.z += b.dir.z * curve;
     
@@ -67,8 +90,6 @@ void main() {
         worldPos.x += pushDir.x * pushStrength * 0.8 * curve;
         worldPos.z += pushDir.y * pushStrength * 0.8 * curve;
         worldPos.y -= pushStrength * 0.8 * curve; 
-        
-        // Update Tangent when trampled
         v_Tangent = normalize(vec3(pushDir.x, 0.2, pushDir.y)); 
     }
     
