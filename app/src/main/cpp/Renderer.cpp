@@ -203,7 +203,8 @@ void GrassRenderer::init() {
     glEnableVertexAttribArray(0);
 
     // Seed grass EXACTLY on terrain heights
-    std::random_device rd; // <-- Fixed: Changed from mt1random_device
+    std::vector<float> instanceData; // <-- FIXED: Added the vector declaration back in!
+    std::random_device rd; 
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dis(-TERRAIN_SIZE/2.0f, TERRAIN_SIZE/2.0f);
     std::uniform_real_distribution<float> hashDis(0.0f, 1.0f);
