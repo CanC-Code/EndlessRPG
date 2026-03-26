@@ -34,11 +34,16 @@ GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainPro
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
     if (std::isnan(mx) || std::isnan(my) || std::isnan(lx) || std::isnan(ly)) return;
 
-    // Circular Deadzone to prevent joystick drift
+    // Circular Deadzone and Normalize to prevent diagonal strafe-speed exploits
     float mag = sqrtf(mx*mx + my*my);
     if (mag > 0.1f) {
-        moveX = std::clamp(mx, -1.0f, 1.0f); 
-        moveY = std::clamp(my, -1.0f, 1.0f);
+        if (mag > 1.0f) {
+            moveX = mx / mag;
+            moveY = my / mag;
+        } else {
+            moveX = mx;
+            moveY = my;
+        }
     } else {
         moveX = 0.0f; moveY = 0.0f;
     }
@@ -118,14 +123,16 @@ float GrassRenderer::getElevation(float x, float z) {
     };
 
     auto exactElevation = [&](float mapX, float mapZ) {
-        float lon = (mapX / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
-        float lat = (mapZ / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
-        float sx = cosf(lat) * cosf(lon), sy = sinf(lat), sz = cosf(lat) * sinf(lon);
+        // FIXED: Swapped spherical projection mapping for a planar noise scale.
+        // Operating at massive real-world circumferences causes floats to lose
+        // precision entirely, turning procedural noise into a flat/staircase plane.
+        float noiseScale = 0.005f; 
+        float nx = mapX * noiseScale;
+        float nz = mapZ * noiseScale;
 
-        float noiseScale = 2000.0f; 
-        float h = noise3(sx * noiseScale * 0.01f, sy * noiseScale * 0.01f, sz * noiseScale * 0.01f) * 35.0f;
-        h += noise3(sx * noiseScale * 0.04f, sy * noiseScale * 0.04f, sz * noiseScale * 0.04f) * 12.0f;
-        h += noise3(sx * noiseScale * 0.1f, sy * noiseScale * 0.1f, sz * noiseScale * 0.1f) * 3.0f;
+        float h = noise3(nx, 0.0f, nz) * 35.0f;
+        h += noise3(nx * 4.0f, 0.0f, nz * 4.0f) * 12.0f;
+        h += noise3(nx * 10.0f, 0.0f, nz * 10.0f) * 3.0f;
         return h;
     };
 
@@ -177,7 +184,6 @@ void GrassRenderer::generateTerrainGrid() {
 }
 
 void GrassRenderer::init() {
-    // Note: computeProgram initialization removed to match optimized pipeline logic
     renderProgram = createProgram(compileShader(GL_VERTEX_SHADER, NativeAssetManager::loadShaderText("shaders/grass.vert")), 
                                   compileShader(GL_FRAGMENT_SHADER, NativeAssetManager::loadShaderText("shaders/grass.frag")));
     terrainProgram = createProgram(compileShader(GL_VERTEX_SHADER, NativeAssetManager::loadShaderText("shaders/terrain.vert")), 
@@ -203,8 +209,8 @@ void GrassRenderer::init() {
     glEnableVertexAttribArray(0);
 
     // Seed grass EXACTLY on terrain heights
-    std::vector<float> instanceData; // <-- FIXED: Added the vector declaration back in!
-    std::random_device rd; 
+    std::vector<float> instanceData;
+    std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dis(-TERRAIN_SIZE/2.0f, TERRAIN_SIZE/2.0f);
     std::uniform_real_distribution<float> hashDis(0.0f, 1.0f);
@@ -260,9 +266,13 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerX += velocityX * dtSafe;
     playerZ += velocityZ * dtSafe;
 
-    // Exact elevation locking
+    // Exact elevation locking with anti-clip
     float targetY = getElevation(playerX, playerZ);
-    playerY += (targetY - playerY) * 15.0f * dtSafe; 
+    if (playerY < targetY) {
+        playerY = targetY; // FIXED: Instant step-up to prevent clipping into ascending hills
+    } else {
+        playerY += (targetY - playerY) * 15.0f * dtSafe; // Smooth falling down hills
+    }
 
     // FINITE DIFFERENCE TERRAIN NORMAL
     float eps = GRID_SPACING * 0.5f;
@@ -279,7 +289,8 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
 
     // SHORTEST-PATH YAW ROTATION
     if (std::abs(velocityX) > 0.1f || std::abs(velocityZ) > 0.1f) {
-        float targetYaw = camYaw + atan2f(moveX, -moveY) * (180.0f / M_PI);
+        // FIXED: Replaced atan2f(moveX, -moveY) to prevent the character from moonwalking
+        float targetYaw = camYaw + atan2f(moveX, moveY) * (180.0f / M_PI);
         float diff = fmodf(targetYaw - playerYaw + 540.0f, 360.0f) - 180.0f;
         playerYaw += diff * 12.0f * dtSafe; 
         playerYaw = fmodf(playerYaw + 360.0f, 360.0f);
@@ -287,8 +298,14 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
 
     // SMOOTH BIOMECHANICAL ALIGNMENT
     float pYawRad = playerYaw * (M_PI / 180.0f);
-    float terrainPitchTarget = -asin(normX * cosf(pYawRad + M_PI/2.0f) + normZ * sinf(pYawRad + M_PI/2.0f));
-    float terrainRollTarget = -asin(normX * cosf(pYawRad) + normZ * sinf(pYawRad));
+    
+    // FIXED: Pitch relates to the slope along the Forward vector, Roll along the Right vector.
+    // Swapped these out to stop the character from tilting sideways when running uphill.
+    float forwardSlope = normX * cosf(pYawRad) + normZ * sinf(pYawRad);
+    float rightSlope = normX * cosf(pYawRad + M_PI/2.0f) + normZ * sinf(pYawRad + M_PI/2.0f);
+    
+    float terrainPitchTarget = -asin(std::clamp(forwardSlope, -1.0f, 1.0f));
+    float terrainRollTarget = -asin(std::clamp(rightSlope, -1.0f, 1.0f));
 
     smoothPitch += (terrainPitchTarget - smoothPitch) * 8.0f * dtSafe;
     smoothRoll += (terrainRollTarget - smoothRoll) * 8.0f * dtSafe;
