@@ -126,8 +126,6 @@ void GrassRenderer::init() {
     glBufferData(GL_SHADER_STORAGE_BUFFER, GRASS_COUNT * 8 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 
-    // PHOTOGRAPHIC FIX: Uniform 8-vertex Quad strip ensures SDF shaders have 
-    // a non-collapsing coordinate system for high-detail seed heads.
     float blade[] = { 
         -0.05f, 0.00f, 0.0f,   0.05f, 0.00f, 0.0f, 
         -0.05f, 0.46f, 0.0f,   0.05f, 0.46f, 0.0f, 
@@ -174,7 +172,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float fwdX = cosf(yawRad), fwdZ = sinf(yawRad);
     float rgtX = cosf(yawRad + M_PI / 2.0f), rgtZ = sinf(yawRad + M_PI / 2.0f);
 
-    // Biomechanical Pace Alignment: Update World Position
     playerX += (fwdX * moveY + rgtX * moveX) * 12.0f * dtSafe;
     playerZ += (fwdZ * moveY + rgtZ * moveX) * 12.0f * dtSafe;
     
@@ -182,14 +179,37 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     playerZ = fmodf(playerZ, EARTH_CIRCUMFERENCE);
     playerY = getElevation(playerX, playerZ);
 
-    // Directional Rotation Logic: Character turns to face the walking vector
+    // TERRAIN NORMAL CALCULATION via Finite Difference
+    float eps = 0.5f;
+    float hL = getElevation(playerX - eps, playerZ);
+    float hR = getElevation(playerX + eps, playerZ);
+    float hD = getElevation(playerX, playerZ - eps);
+    float hU = getElevation(playerX, playerZ + eps);
+    
+    float normX = hL - hR;
+    float normY = 2.0f * eps;
+    float normZ = hD - hU;
+    float normLen = sqrtf(normX*normX + normY*normY + normZ*normZ);
+    normX /= normLen; normY /= normLen; normZ /= normLen;
+
+    // Directional Interaction Interpolation
     if (moveX != 0.0f || moveY != 0.0f) {
         float targetYaw = camYaw + atan2f(moveX, -moveY) * (180.0f / M_PI);
         float diff = fmodf(targetYaw - playerYaw + 540.0f, 360.0f) - 180.0f;
         playerYaw += diff * 12.0f * dtSafe; 
     }
 
-    // Camera Smoothing and Zoom Logic
+    // Biomechanical Angle Projection onto Terrain Normal
+    float pYawRad = playerYaw * (M_PI / 180.0f);
+    float fwdDirX = cosf(pYawRad + M_PI/2.0f); 
+    float fwdDirZ = sinf(pYawRad + M_PI/2.0f);
+    float rgtDirX = cosf(pYawRad);
+    float rgtDirZ = sinf(pYawRad);
+
+    // Dynamic pitch and roll mapping
+    float terrainPitch = -asin(normX * fwdDirX + normZ * fwdDirZ);
+    float terrainRoll = -asin(normX * rgtDirX + normZ * rgtDirZ);
+
     float tX, tY, tZ;
     if (isThirdPerson) {
         tX = playerX - (lookX * cameraZoom);
@@ -208,19 +228,16 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float proj[16], view[16], vp[16];
     buildPerspective(proj, 0.8f, (float)width / (float)height, 0.1f, 1500.0f);
     
-    // LookAt matrix creates the view transformation
     if (isThirdPerson) buildLookAt(view, 0.0f, camY, 0.0f, playerX - camX, playerY + 1.5f, playerZ - camZ);
     else buildLookAt(view, 0.0f, camY, 0.0f, lookX, camY + lookY, lookZ);
     multiply(vp, proj, view);
 
-    // Procedural Compute Pass for Wheat/Grass animation
     glUseProgram(computeProgram);
     glUniform1f(glGetUniformLocation(computeProgram, "u_Time"), time);
     glUniform3f(glGetUniformLocation(computeProgram, "u_CameraPos"), camX, camY, camZ);
     glDispatchCompute(32, 32, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    // Terrain Rendering Pass
     glUseProgram(terrainProgram);
     glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), camX, camY, camZ);
@@ -228,7 +245,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glBindVertexArray(terrainVao);
     glDrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_SHORT, 0);
 
-    // Foliage Rendering Pass (Instanced Drawing)
     glUseProgram(renderProgram);
     glUniformMatrix4fv(glGetUniformLocation(renderProgram, "u_ViewProjection"), 1, GL_FALSE, vp);
     glUniform3f(glGetUniformLocation(renderProgram, "u_CameraPos"), camX, camY, camZ);
@@ -236,10 +252,9 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glBindVertexArray(vao);
     glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 8, GRASS_COUNT);
 
-    // FIXED: Character Render Call (Resolves Ninja build error)
-    // Now passes 7 arguments: vp, local_x, local_y, local_z, yaw, world_camera_x, world_camera_z
+    // Send absolute environment data through to character matrix 
     if (isThirdPerson) {
-        playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, playerYaw, camX, camZ);
+        playerModel.render(vp, playerX - camX, playerY, playerZ - camZ, playerYaw, terrainPitch, terrainRoll, camX, camZ);
     }
 }
 
