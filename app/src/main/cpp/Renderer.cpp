@@ -45,12 +45,12 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
 
     isThirdPerson = tp; 
     cameraZoom = std::clamp(zoom, 2.0f, 40.0f);
-    
+
     // Non-linear camera sensitivity
     float sensitivity = 0.25f + (std::abs(lx) * 0.1f); 
     camYaw += lx * sensitivity; 
     camPitch -= ly * sensitivity;
-    
+
     camYaw = fmodf(camYaw, 360.0f);
     if (camYaw < 0.0f) camYaw += 360.0f;
     camPitch = std::clamp(camPitch, -85.0f, 85.0f);
@@ -62,7 +62,7 @@ GLuint GrassRenderer::compileShader(GLenum type, const std::string& source) {
     const char* src = source.c_str();
     glShaderSource(shader, 1, &src, nullptr);
     glCompileShader(shader);
-    
+
     GLint success;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
     if (!success) {
@@ -121,7 +121,7 @@ float GrassRenderer::getElevation(float x, float z) {
         float lon = (mapX / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
         float lat = (mapZ / EARTH_CIRCUMFERENCE) * 2.0f * M_PI;
         float sx = cosf(lat) * cosf(lon), sy = sinf(lat), sz = cosf(lat) * sinf(lon);
-        
+
         float noiseScale = 2000.0f; 
         float h = noise3(sx * noiseScale * 0.01f, sy * noiseScale * 0.01f, sz * noiseScale * 0.01f) * 35.0f;
         h += noise3(sx * noiseScale * 0.04f, sy * noiseScale * 0.04f, sz * noiseScale * 0.04f) * 12.0f;
@@ -134,12 +134,12 @@ float GrassRenderer::getElevation(float x, float z) {
     float cellZ = floorf(z / GRID_SPACING) * GRID_SPACING;
     float tx = (x - cellX) / GRID_SPACING;
     float tz = (z - cellZ) / GRID_SPACING;
-    
+
     float h00 = exactElevation(cellX, cellZ);
     float h10 = exactElevation(cellX + GRID_SPACING, cellZ);
     float h01 = exactElevation(cellX, cellZ + GRID_SPACING);
     float h11 = exactElevation(cellX + GRID_SPACING, cellZ + GRID_SPACING);
-    
+
     if (tx + tz <= 1.0f) return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
     else return h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
 }
@@ -193,7 +193,7 @@ void GrassRenderer::init() {
         -0.02f, 0.93f, 0.0f,   0.02f, 0.93f, 0.0f, 
         -0.00f, 1.40f, 0.0f,   0.00f, 1.40f, 0.0f 
     };
-    
+
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
     glBindVertexArray(vao);
@@ -203,8 +203,7 @@ void GrassRenderer::init() {
     glEnableVertexAttribArray(0);
 
     // Seed grass EXACTLY on terrain heights
-    std::vector<float> instanceData;
-    std::mt1random_device rd;
+    std::random_device rd; // <-- Fixed: Changed from mt1random_device
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dis(-TERRAIN_SIZE/2.0f, TERRAIN_SIZE/2.0f);
     std::uniform_real_distribution<float> hashDis(0.0f, 1.0f);
@@ -232,7 +231,7 @@ void GrassRenderer::init() {
 
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
     float dtSafe = std::min(dt, 0.033f); // Max 30fps delta for physics stability
-    
+
     glViewport(0, 0, width, height);
     glClearColor(0.5f, 0.65f, 0.8f, 1.0f); // Atmospheric Sky Color
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -245,21 +244,21 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float lookX = cosf(yawRad) * cosf(pitchRad);
     float lookY = sinf(pitchRad);
     float lookZ = sinf(yawRad) * cosf(pitchRad);
-    
+
     float fwdX = cosf(yawRad), fwdZ = sinf(yawRad);
     float rgtX = cosf(yawRad + M_PI / 2.0f), rgtZ = sinf(yawRad + M_PI / 2.0f);
 
     // KINEMATICS: Inertia and Momentum
     float targetSpeedX = (fwdX * moveY + rgtX * moveX) * 10.0f;
     float targetSpeedZ = (fwdZ * moveY + rgtZ * moveX) * 10.0f;
-    
+
     // Smooth damp velocity for realistic human acceleration
     velocityX += (targetSpeedX - velocityX) * 8.0f * dtSafe;
     velocityZ += (targetSpeedZ - velocityZ) * 8.0f * dtSafe;
-    
+
     playerX += velocityX * dtSafe;
     playerZ += velocityZ * dtSafe;
-    
+
     // Exact elevation locking
     float targetY = getElevation(playerX, playerZ);
     playerY += (targetY - playerY) * 15.0f * dtSafe; 
@@ -270,7 +269,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     float hR = getElevation(playerX + eps, playerZ);
     float hD = getElevation(playerX, playerZ - eps);
     float hU = getElevation(playerX, playerZ + eps);
-    
+
     float normX = hL - hR;
     float normY = 2.0f * eps;
     float normZ = hD - hU;
@@ -299,7 +298,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
         tX = playerX - (lookX * cameraZoom);
         tZ = playerZ - (lookZ * cameraZoom);
         tY = (playerY + 1.8f) - (lookY * cameraZoom);
-        
+
         // Prevent camera from clipping through hills
         float camFloor = getElevation(tX, tZ) + 0.8f;
         if (tY < camFloor) {
