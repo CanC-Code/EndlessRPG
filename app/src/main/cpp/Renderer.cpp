@@ -1,5 +1,5 @@
 #include "Renderer.h"
-#include "AssetManager.h" // Needed to load the actual shader files
+#include "AssetManager.h" // Includes your NativeAssetManager class
 #include <cmath>
 #include <vector>
 #include <string>
@@ -87,14 +87,13 @@ float GrassRenderer::getElevation(float x, float z) {
 }
 
 void GrassRenderer::init() {
-    // 1. Load and compile shaders using your actual AssetManager
-    // *If your AssetManager uses a different method name, just change 'loadTextAsset' below!*
-    std::string tv = AssetManager::loadTextAsset("shaders/terrain.vert");
-    std::string tf = AssetManager::loadTextAsset("shaders/terrain.frag");
+    // 1. Load and compile shaders using NativeAssetManager
+    std::string tv = NativeAssetManager::loadShaderText("shaders/terrain.vert");
+    std::string tf = NativeAssetManager::loadShaderText("shaders/terrain.frag");
     terrainProgram = createProgram(compileShader(GL_VERTEX_SHADER, tv), compileShader(GL_FRAGMENT_SHADER, tf));
 
-    std::string gv = AssetManager::loadTextAsset("shaders/grass.vert");
-    std::string gf = AssetManager::loadTextAsset("shaders/grass.frag");
+    std::string gv = NativeAssetManager::loadShaderText("shaders/grass.vert");
+    std::string gf = NativeAssetManager::loadShaderText("shaders/grass.frag");
     renderProgram = createProgram(compileShader(GL_VERTEX_SHADER, gv), compileShader(GL_FRAGMENT_SHADER, gf));
 
     // 2. Generate geometry
@@ -210,7 +209,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
         glDrawArraysInstanced(GL_TRIANGLES, 0, 3, GRASS_COUNT);
     }
     
-    // 3. Draw Character (Now matches your exact 9-argument parameter list!)
+    // 3. Draw Character (Proper 9-argument call)
     playerModel.render(viewProj, playerX, playerY, playerZ, playerYaw, 0.0f, 0.0f, camX, camZ);
 }
 
