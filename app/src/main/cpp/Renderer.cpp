@@ -1,4 +1,4 @@
-#include "renderer.h"
+#include "Renderer.h" // Fixed the capital 'R' here!
 #include <cmath>
 #include <vector>
 #include <string>
