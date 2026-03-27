@@ -72,7 +72,7 @@ GrassRenderer::GrassRenderer() {
     velocityX = 0.0f; velocityZ = 0.0f;
     smoothPitch = 0.0f; smoothRoll = 0.0f;
     
-    // FIX BUG 2: Spawn character exactly on surface elevation
+    // Spawn character exactly on surface elevation
     playerY = getElevation(0.0f, 0.0f);
 }
 
@@ -166,15 +166,27 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
         playerY += (targetY - playerY) * 15.0f * dtSafe; // Smooth fall
     }
     
-    // Position Camera
+    // Position Camera and Calculate Look Target
+    float lookX, lookY, lookZ;
+    
     if (isThirdPerson) {
         camX = playerX - std::sin(-camYaw) * cameraZoom;
         camZ = playerZ + std::cos(-camYaw) * cameraZoom;
         camY = playerY + 2.0f + std::sin(camPitch) * cameraZoom;
+        
+        // Look at the player
+        lookX = playerX;
+        lookY = playerY + 1.0f;
+        lookZ = playerZ;
     } else {
         camX = playerX;
-        camY = playerY + 1.8f;
+        camY = playerY + 1.8f; // Eye level
         camZ = playerZ;
+        
+        // Look FORWARD (Prevents looking straight down and breaking the math)
+        lookX = camX + std::sin(-camYaw);
+        lookY = camY + std::sin(camPitch);
+        lookZ = camZ - std::cos(-camYaw);
     }
     
     glViewport(0, 0, width, height);
@@ -185,7 +197,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     buildPerspective(proj, 60.0f * M_PI / 180.0f, (float)width / (float)height, 0.1f, 200.0f);
     
     float view[16];
-    buildLookAt(view, camX, camY, camZ, playerX, playerY + 1.0f, playerZ);
+    buildLookAt(view, camX, camY, camZ, lookX, lookY, lookZ);
     
     float viewProj[16];
     multiply(viewProj, proj, view);
@@ -195,7 +207,8 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     // 1. Draw Terrain
     if (terrainProgram) {
         glUseProgram(terrainProgram);
-        glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uViewProj"), 1, GL_FALSE, viewProj);
+        // FIX: Match the exact uniform name expected by your terrain.vert shader (uVP)
+        glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uVP"), 1, GL_FALSE, viewProj);
         glBindVertexArray(terrainVao);
         glDrawArrays(GL_TRIANGLES, 0, terrainIndexCount);
     }
@@ -203,13 +216,14 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     // 2. Draw Grass (Instanced)
     if (renderProgram) {
         glUseProgram(renderProgram);
-        glUniformMatrix4fv(glGetUniformLocation(renderProgram, "uViewProj"), 1, GL_FALSE, viewProj);
+        // FIX: Match the exact uniform name expected by your grass.vert shader (uVP)
+        glUniformMatrix4fv(glGetUniformLocation(renderProgram, "uVP"), 1, GL_FALSE, viewProj);
         glUniform1f(glGetUniformLocation(renderProgram, "uTime"), time);
         glBindVertexArray(vao);
         glDrawArraysInstanced(GL_TRIANGLES, 0, 3, GRASS_COUNT);
     }
     
-    // 3. Draw Character (Proper 9-argument call)
+    // 3. Draw Character 
     playerModel.render(viewProj, playerX, playerY, playerZ, playerYaw, 0.0f, 0.0f, camX, camZ);
 }
 
