@@ -8,36 +8,28 @@
 
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GameEngine", __VA_ARGS__)
 
-// --- C++ equivalents of GLSL math functions ---
+// --- C++ equivalents of GLSL math functions matching terrain.vert exactly ---
 inline float fract(float x) { return x - std::floor(x); }
 inline float mix(float x, float y, float a) { return x * (1.0f - a) + y * a; }
 
-float hash3(float px, float py, float pz) {
-    float p3x = fract(px * 0.1031f);
-    float p3y = fract(py * 0.1030f);
-    float p3z = fract(pz * 0.0973f);
-    float dot_val = (p3x * (p3y + 33.33f)) + (p3y * (p3z + 33.33f)) + (p3z * (p3x + 33.33f));
-    p3x += dot_val; p3y += dot_val; p3z += dot_val;
-    return fract((p3x + p3y) * p3z);
+float hash2(float px, float py) {
+    px = 50.0f * fract(px * 0.3183099f);
+    py = 50.0f * fract(py * 0.3183099f);
+    return fract(px * py * (px + py));
 }
 
-float noise3(float x, float y, float z) {
-    float ix = std::floor(x); float iy = std::floor(y); float iz = std::floor(z);
-    float fx = fract(x); float fy = fract(y); float fz = fract(z);
+float noise2(float x, float y) {
+    float ix = std::floor(x); float iy = std::floor(y);
+    float fx = fract(x); float fy = fract(y);
     float ux = fx * fx * (3.0f - 2.0f * fx);
     float uy = fy * fy * (3.0f - 2.0f * fy);
-    float uz = fz * fz * (3.0f - 2.0f * fz);
 
-    float n000 = hash3(ix, iy, iz); float n100 = hash3(ix + 1.0f, iy, iz);
-    float n010 = hash3(ix, iy + 1.0f, iz); float n110 = hash3(ix + 1.0f, iy + 1.0f, iz);
-    float n001 = hash3(ix, iy, iz + 1.0f); float n101 = hash3(ix + 1.0f, iy, iz + 1.0f);
-    float n011 = hash3(ix, iy + 1.0f, iz + 1.0f); float n111 = hash3(ix + 1.0f, iy + 1.0f, iz + 1.0f);
+    float n00 = hash2(ix, iy);
+    float n10 = hash2(ix + 1.0f, iy);
+    float n01 = hash2(ix, iy + 1.0f);
+    float n11 = hash2(ix + 1.0f, iy + 1.0f);
 
-    float nx00 = mix(n000, n100, ux); float nx10 = mix(n010, n110, ux);
-    float nx01 = mix(n001, n101, ux); float nx11 = mix(n011, n111, ux);
-    float nxy0 = mix(nx00, nx10, uy); float nxy1 = mix(nx01, nx11, uy);
-
-    return mix(nxy0, nxy1, uz);
+    return mix(mix(n00, n10, ux), mix(n01, n11, ux), uy);
 }
 
 // --- Class Implementation ---
@@ -55,11 +47,12 @@ GrassRenderer::GrassRenderer() {
     playerY = getElevation(0.0f, 0.0f);
 }
 
+// Exactly matches the math in your terrain.vert shader
 float GrassRenderer::getElevation(float x, float z) {
-    float p_x = x * 0.005f; float p_y = 0.0f; float p_z = z * 0.005f;
-    float h = noise3(p_x, p_y, p_z) * 35.0f;
-    h += noise3(p_x * 4.0f, p_y * 4.0f, p_z * 4.0f) * 12.0f;
-    h += noise3(p_x * 10.0f, p_y * 10.0f, p_z * 10.0f) * 3.0f;
+    float px = x * 0.05f;
+    float py = z * 0.05f;
+    float h = noise2(px, py) * 20.0f;
+    h += noise2(px * 4.0f, py * 4.0f) * 5.0f;
     return h;
 }
 
@@ -67,13 +60,6 @@ void GrassRenderer::init() {
     // 1. Reintroduce Compute Shader Logic
     std::string cs = NativeAssetManager::loadShaderText("shaders/grass.comp");
     if(!cs.empty()) computeProgram = createComputeProgram(compileShader(GL_COMPUTE_SHADER, cs));
-
-    // Initialize SSBO for Grass Compute Shader
-    glGenBuffers(1, &ssbo);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
-    // Allocate buffer size (assuming generous 64 bytes per blade for position, physics, etc)
-    glBufferData(GL_SHADER_STORAGE_BUFFER, GRASS_COUNT * 64, nullptr, GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
 
     // 2. Load Graphics Shaders
     std::string tv = NativeAssetManager::loadShaderText("shaders/terrain.vert");
@@ -87,6 +73,31 @@ void GrassRenderer::init() {
     // 3. Generate Terrain & Geometry
     generateTerrainGrid();
 
+    // 4. Generate properly aligned Grass SSBO (8 floats per blade)
+    std::vector<float> instData;
+    for(int i = 0; i < GRASS_COUNT; i++) {
+        float gx = (rand() % 15000 / 100.0f) - 75.0f; // Random X spread
+        float gz = (rand() % 15000 / 100.0f) - 75.0f; // Random Z spread
+        float gy = getElevation(gx, gz); // Plant exactly on the terrain
+        
+        // vec4 pos_scale
+        instData.push_back(gx);
+        instData.push_back(gy);
+        instData.push_back(gz);
+        instData.push_back(1.0f); // Scale
+        
+        // vec4 physics (must be pushed to align with struct memory size)
+        instData.push_back(0.0f);
+        instData.push_back(0.0f);
+        instData.push_back(0.0f);
+        instData.push_back(0.0f);
+    }
+
+    glGenBuffers(1, &ssbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, instData.size() * sizeof(float), instData.data(), GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
+
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
     float blade[] = { -0.05f, 0.0f, 0.0f,  0.05f, 0.0f, 0.0f,  0.0f, 0.8f, 0.0f };
@@ -97,7 +108,7 @@ void GrassRenderer::init() {
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
     glBindVertexArray(0);
 
-    // 4. Initialize Character
+    // 5. Initialize Character
     playerModel.init();
 
     glClearColor(0.5f, 0.7f, 1.0f, 1.0f); // Beautiful blue sky
@@ -108,16 +119,23 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     moveX = mx; moveY = my;
     camYaw += lx * 0.01f;
     camPitch += ly * 0.01f;
+    
+    // Prevent gimbal lock / camera flipping
+    if (camPitch > 1.5f) camPitch = 1.5f;
+    if (camPitch < -1.5f) camPitch = -1.5f;
+    
     isThirdPerson = tp;
     cameraZoom = zoom;
 }
 
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
+    if (height == 0) height = 1;
     float dtSafe = (dt > 0.033f) ? 0.033f : dt;
     float speed = 15.0f * dtSafe;
     
-    velocityX = std::sin(-camYaw) * moveY * speed;
-    velocityZ = -std::cos(-camYaw) * moveY * speed;
+    // Calculate movement based on camera angle
+    velocityX = std::sin(camYaw) * moveY * speed;
+    velocityZ = -std::cos(camYaw) * moveY * speed;
     
     playerX += velocityX;
     playerZ += velocityZ;
@@ -126,18 +144,18 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (playerY < targetY) playerY = targetY; 
     else playerY += (targetY - playerY) * 15.0f * dtSafe; 
     
-    // Position Camera perfectly (Spherical coordinate math prevents looking "straight down" bug)
+    // Position Camera perfectly
     float lookX, lookY, lookZ;
     if (isThirdPerson) {
-        camX = playerX - std::sin(-camYaw) * cameraZoom;
-        camZ = playerZ + std::cos(-camYaw) * cameraZoom;
+        camX = playerX - std::sin(camYaw) * cameraZoom;
+        camZ = playerZ + std::cos(camYaw) * cameraZoom;
         camY = playerY + 2.0f + std::sin(camPitch) * cameraZoom;
         lookX = playerX; lookY = playerY + 1.0f; lookZ = playerZ;
     } else {
         camX = playerX; camY = playerY + 1.8f; camZ = playerZ;
-        float dirX = std::sin(-camYaw) * std::cos(camPitch);
+        float dirX = std::sin(camYaw) * std::cos(camPitch);
         float dirY = std::sin(camPitch);
-        float dirZ = -std::cos(-camYaw) * std::cos(camPitch);
+        float dirZ = -std::cos(camYaw) * std::cos(camPitch);
         lookX = camX + dirX; lookY = camY + dirY; lookZ = camZ + dirZ;
     }
     
@@ -145,7 +163,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
     // Matrix calculations
-    float proj[16]; buildPerspective(proj, 60.0f * M_PI / 180.0f, (float)width / (float)height, 0.1f, 500.0f);
+    float proj[16]; buildPerspective(proj, 60.0f * 3.14159265359f / 180.0f, (float)width / (float)height, 0.1f, 500.0f);
     float view[16]; buildLookAt(view, camX, camY, camZ, lookX, lookY, lookZ);
     float viewProj[16]; multiply(viewProj, proj, view);
     
@@ -155,18 +173,15 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
         glUniform1f(glGetUniformLocation(computeProgram, "uTime"), time);
         glUniform3f(glGetUniformLocation(computeProgram, "uPlayerPos"), playerX, playerY, playerZ);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, ssbo);
-        glDispatchCompute(GRASS_COUNT / 64, 1, 1); // Group size of 64
+        glDispatchCompute(GRASS_COUNT / 64, 1, 1); 
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
     }
     
     // === 2. RENDER TERRAIN ===
     if (terrainProgram) {
         glUseProgram(terrainProgram);
-        // Blanket-cover uniforms just in case of different naming conventions
         glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uVP"), 1, GL_FALSE, viewProj);
-        glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uViewProj"), 1, GL_FALSE, viewProj);
         glBindVertexArray(terrainVao);
-        // Restored EBO Logic!
         glDrawElements(GL_TRIANGLES, terrainIndexCount, GL_UNSIGNED_INT, 0); 
     }
     
@@ -174,7 +189,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     if (renderProgram) {
         glUseProgram(renderProgram);
         glUniformMatrix4fv(glGetUniformLocation(renderProgram, "uVP"), 1, GL_FALSE, viewProj);
-        glUniformMatrix4fv(glGetUniformLocation(renderProgram, "uViewProj"), 1, GL_FALSE, viewProj);
         glUniform1f(glGetUniformLocation(renderProgram, "uTime"), time);
         glBindVertexArray(vao);
         glDrawArraysInstanced(GL_TRIANGLES, 0, 3, GRASS_COUNT);
@@ -260,6 +274,20 @@ GLuint GrassRenderer::createProgram(GLuint vS, GLuint fS) {
     glAttachShader(prog, vS);
     glAttachShader(prog, fS);
     glLinkProgram(prog);
+    
+    // Safety check incase the linking step errors out
+    GLint linked;
+    glGetProgramiv(prog, GL_LINK_STATUS, &linked);
+    if(!linked) {
+        GLint infoLen = 0;
+        glGetProgramiv(prog, GL_INFO_LOG_LENGTH, &infoLen);
+        if(infoLen) {
+            std::vector<char> infoLog(infoLen);
+            glGetProgramInfoLog(prog, infoLen, nullptr, infoLog.data());
+            LOGE("Program link failed: %s", infoLog.data());
+        }
+    }
+    
     return prog;
 }
 
