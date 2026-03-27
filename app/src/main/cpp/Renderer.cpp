@@ -1,10 +1,22 @@
-#include "Renderer.h"
+// --- Essential Android & OpenGL Includes ---
+#include <jni.h>
+#include <android/asset_manager.h>
+#include <android/asset_manager_jni.h>
+#include <android/native_window.h>
+#include <android/native_window_jni.h>
+#include <EGL/egl.h>
+#include <GLES3/gl3.h>
+#include <GLES3/gl3ext.h>
 #include <android/log.h>
+
+// --- Standard C++ Includes ---
 #include <cmath>
 #include <vector>
 #include <string>
 #include <cstdlib>
-#include <GLES3/gl3ext.h>
+
+// --- Project Includes ---
+#include "Renderer.h"
 
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "GameEngine", __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "GameEngine", __VA_ARGS__)
