@@ -19,7 +19,7 @@ const float GRID_SPACING = TERRAIN_SIZE / (float)TERRAIN_GRID; // Exactly 2.0f
 GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainProgram(0), 
                                  ssbo(0), vao(0), vbo(0), instanceVbo(0),
                                  terrainVao(0), terrainVbo(0), terrainEbo(0), terrainIndexCount(0),
-                                 playerX(0.0f), playerY(0.0f), playerZ(0.0f), playerYaw(0.0f),
+                                 playerX(0.0f), playerZ(0.0f), playerYaw(0.0f),
                                  camX(0.0f), camY(1.8f), camZ(0.0f),
                                  camYaw(-90.0f), camPitch(0.0f),
                                  moveX(0.0f), moveY(0.0f),
@@ -29,6 +29,10 @@ GrassRenderer::GrassRenderer() : computeProgram(0), renderProgram(0), terrainPro
     smoothRoll = 0.0f;
     velocityX = 0.0f;
     velocityZ = 0.0f;
+
+    // FIX: Seed playerY to the actual terrain elevation at spawn (0,0) so the
+    // character does not start underground and clip/fall through on first frame.
+    playerY = getElevation(0.0f, 0.0f);
 }
 
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
@@ -123,9 +127,6 @@ float GrassRenderer::getElevation(float x, float z) {
     };
 
     auto exactElevation = [&](float mapX, float mapZ) {
-        // FIXED: Swapped spherical projection mapping for a planar noise scale.
-        // Operating at massive real-world circumferences causes floats to lose
-        // precision entirely, turning procedural noise into a flat/staircase plane.
         float noiseScale = 0.005f; 
         float nx = mapX * noiseScale;
         float nz = mapZ * noiseScale;
@@ -269,7 +270,7 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     // Exact elevation locking with anti-clip
     float targetY = getElevation(playerX, playerZ);
     if (playerY < targetY) {
-        playerY = targetY; // FIXED: Instant step-up to prevent clipping into ascending hills
+        playerY = targetY; // Instant step-up to prevent clipping into ascending hills
     } else {
         playerY += (targetY - playerY) * 15.0f * dtSafe; // Smooth falling down hills
     }
@@ -289,7 +290,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
 
     // SHORTEST-PATH YAW ROTATION
     if (std::abs(velocityX) > 0.1f || std::abs(velocityZ) > 0.1f) {
-        // FIXED: Replaced atan2f(moveX, -moveY) to prevent the character from moonwalking
         float targetYaw = camYaw + atan2f(moveX, moveY) * (180.0f / M_PI);
         float diff = fmodf(targetYaw - playerYaw + 540.0f, 360.0f) - 180.0f;
         playerYaw += diff * 12.0f * dtSafe; 
@@ -299,8 +299,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     // SMOOTH BIOMECHANICAL ALIGNMENT
     float pYawRad = playerYaw * (M_PI / 180.0f);
     
-    // FIXED: Pitch relates to the slope along the Forward vector, Roll along the Right vector.
-    // Swapped these out to stop the character from tilting sideways when running uphill.
     float forwardSlope = normX * cosf(pYawRad) + normZ * sinf(pYawRad);
     float rightSlope = normX * cosf(pYawRad + M_PI/2.0f) + normZ * sinf(pYawRad + M_PI/2.0f);
     
