@@ -7,7 +7,6 @@ uniform vec3 u_CameraPos;
 out vec3 vWorldPos;
 out float vElevation;
 
-// Same exact elevation math as the grass!
 float hash3(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 float noise3(vec3 x) {
     vec3 i = floor(x); vec3 f = fract(x);
@@ -30,11 +29,11 @@ float exactElevation(vec2 mapXZ) {
 }
 
 void main() {
-    // Calculate world position based on camera offsets (assuming a repeating grid)
     vec3 worldPos = aPosition;
     
-    // Snap the terrain grid to the camera to create an infinite floor
-    vec2 snappedCam = floor(u_CameraPos.xz);
+    // CRITICAL FIX: Since your C++ grid is built in steps of 4.0, we MUST 
+    // align camera snapping to exactly 4.0 to prevent crawling vertex artifacts!
+    vec2 snappedCam = floor(u_CameraPos.xz / 4.0) * 4.0;
     worldPos.x += snappedCam.x;
     worldPos.z += snappedCam.y;
 
