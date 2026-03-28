@@ -1,66 +1,38 @@
 #version 310 es
-layout(location = 0) in vec3 aPos;       // Local blade geometry (8 vertices)
-layout(location = 1) in vec4 aInstance;  // x, y, z world position, w = rotation/scale hash
+// This shader uses instancing. gl_InstanceID tells us which blade we are drawing.
+// gl_VertexID tells us which vertex of the triangle we are drawing.
 
-uniform mat4 u_ViewProjection;
-uniform vec3 u_PlayerPos;
-uniform float u_Time;
+struct Blade { vec4 pos; vec4 dir; };
+layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
 
-out vec3 vNormal;
-out vec2 vUV;
+uniform mat4 u_MVP;
+
 out vec3 vWorldPos;
 out float vHeightTaper;
 
 void main() {
-    float hash = aInstance.w;
-    float scale = 0.8 + (fract(hash * 13.33) * 0.6); // Random height variance
-    
-    // Base vertex height (0.0 at root, 1.0 at tip)
-    float normalizedHeight = aPos.y / 1.40; 
-    vHeightTaper = normalizedHeight;
-    vUV = vec2(aPos.x + 0.5, normalizedHeight);
+    Blade b = blades[gl_InstanceID];
+    vec3 basePos = b.pos.xyz;
+    vec3 windDir = b.dir.xyz;
 
-    // Rotate blade randomly around Y axis
-    float angle = hash * 6.28318;
-    float c = cos(angle), s = sin(angle);
-    mat3 rotY = mat3(
-        c, 0.0, s,
-        0.0, 1.0, 0.0,
-        -s, 0.0, c
-    );
-
-    vec3 localPos = rotY * (aPos * vec3(1.0, scale, 1.0));
-    vec3 worldPos = localPos + aInstance.xyz;
-
-    // --- PROCEDURAL WIND PHYSICS ---
-    // Multi-octave sine waves moving across world XZ coordinates
-    float windStrength = 0.15;
-    float windSpeed = 2.5;
-    vec2 windDir = normalize(vec2(1.0, 0.5));
-    float windPhase = dot(worldPos.xz, windDir) * 0.2 + u_Time * windSpeed;
-    float windBend = (sin(windPhase) + sin(windPhase * 2.3) * 0.5) * windStrength;
+    // Build a simple triangle for the grass blade
+    // ID 0: Bottom Left, ID 1: Bottom Right, ID 2: Top Center
+    float width = 0.1;
+    float height = 1.0;
     
-    // --- PLAYER COLLISION KINEMATICS ---
-    // Push grass away radially based on proximity to the player
-    vec2 toPlayerXZ = worldPos.xz - u_PlayerPos.xz;
-    float distToPlayer = length(toPlayerXZ);
-    float collisionRadius = 0.8; // Player physical radius
-    
-    if (distToPlayer < collisionRadius) {
-        float pushForce = (collisionRadius - distToPlayer) / collisionRadius;
-        // Smoothstep for natural organic bending
-        pushForce = smoothstep(0.0, 1.0, pushForce);
-        vec2 pushDir = normalize(toPlayerXZ);
-        // Only bend the upper vertices, keep roots grounded
-        worldPos.xz -= pushDir * pushForce * normalizedHeight * 0.6;
-        worldPos.y -= pushForce * normalizedHeight * 0.3; // Squash down
+    vec3 offset = vec3(0.0);
+    if (gl_VertexID == 0) {
+        offset = vec3(-width, 0.0, 0.0);
+        vHeightTaper = 0.0;
+    } else if (gl_VertexID == 1) {
+        offset = vec3(width, 0.0, 0.0);
+        vHeightTaper = 0.0;
+    } else {
+        offset = vec3(0.0, height, 0.0) + windDir; // Tip bends with wind
+        vHeightTaper = 1.0;
     }
 
-    // Apply wind bending (mostly affects the tip)
-    worldPos.xz += windDir * windBend * pow(normalizedHeight, 2.0);
-
-    vWorldPos = worldPos;
-    vNormal = normalize(rotY * vec3(0.0, 0.0, 1.0));
-    
-    gl_Position = u_ViewProjection * vec4(worldPos, 1.0);
+    vec3 finalPos = basePos + offset;
+    vWorldPos = finalPos;
+    gl_Position = u_MVP * vec4(finalPos, 1.0);
 }
