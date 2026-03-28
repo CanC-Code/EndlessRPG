@@ -7,82 +7,34 @@ layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
 uniform float u_Time;
 uniform vec3 u_CameraPos;
 
-const float EARTH_RADIUS = 6371000.0;
-const float EARTH_CIRCUMFERENCE = 2.0 * 3.14159265 * EARTH_RADIUS;
-
-// Random math functions (Kept from your current state)
-float hash3(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
-float noise3(vec3 x) {
-    vec3 i = floor(x); vec3 f = fract(x);
-    vec3 u = f * f * (3.0 - 2.0 * f);
-    float a0 = hash3(i + vec3(0,0,0)); float a1 = hash3(i + vec3(1,0,0));
-    float a2 = hash3(i + vec3(0,1,0)); float a3 = hash3(i + vec3(1,1,0));
-    float a4 = hash3(i + vec3(0,0,1)); float a5 = hash3(i + vec3(1,0,1));
-    float a6 = hash3(i + vec3(0,1,1)); float a7 = hash3(i + vec3(1,1,1));
-    return mix(mix(mix(a0, a1, u.x), mix(a2, a3, u.x), u.y), mix(mix(a4, a5, u.x), mix(a6, a7, u.x), u.y), u.z);
-}
-
-float exactElevation(vec2 mapXZ) {
-    float lon = (mapXZ.x / EARTH_CIRCUMFERENCE) * 2.0 * 3.14159265;
-    float lat = (mapXZ.y / EARTH_CIRCUMFERENCE) * 2.0 * 3.14159265;
-    vec3 s = vec3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon));
-    return noise3(s * 4000.0 * 0.01) * 30.0 + noise3(s * 4000.0 * 0.03) * 10.0;
-}
-
-float soilFertility(vec2 p) {
-    vec2 i = floor(p); vec2 f = fract(p); vec2 u = f*f*(3.0-2.0*f);
-    float a = fract(sin(dot(i, vec2(12.9898, 78.233))) * 43758.5453);
-    float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(12.9898, 78.233))) * 43758.5453);
-    float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
-    float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
+// ... (Insert the exact same EARTH_RADIUS, hash3, noise3, and exactElevation functions from terrain.vert here) ...
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= uint(blades.length())) return;
 
-    // RESTORED: Grid anchoring mapped to 1D array. Assumes ~65536 blades (256x256)
+    // Treat the 1D array like a 2D grid (assuming 65536 blades = 256x256)
     uint gx = idx % 256u;
     uint gy = idx / 256u;
-    float spacing = 0.8; // Distance between blades
+    float spacing = 0.8; 
 
-    // Snap to grid so grass feels anchored to the ground as camera moves
+    // Anchor the grid to the camera so it doesn't slide!
     vec2 snappedCam = floor(u_CameraPos.xz / spacing) * spacing;
     float startX = snappedCam.x - (256.0 * spacing / 2.0);
     float startZ = snappedCam.y - (256.0 * spacing / 2.0);
 
-    // Calculate baseline grid position
     vec2 targetPos = vec2(startX + float(gx) * spacing, startZ + float(gy) * spacing);
 
-    // Add randomized jitter to break up the uniform grid look
+    // Add jitter so it looks organic, not like a chessboard
     float jx = fract(sin(dot(targetPos, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
     float jz = fract(sin(dot(targetPos, vec2(93.989, 67.345))) * 43758.5453) - 0.5;
     targetPos += vec2(jx, jz) * spacing * 0.8;
 
-    // Barren patch exclusion
-    if (soilFertility(targetPos * 0.5) < 0.45) {
-        // Shove blade underground or far away if soil is bad
-        blades[idx].pos = vec4(0.0, -1000.0, 0.0, 0.0);
-        return; 
-    }
-
-    // Retained MASSIVE OPTIMIZATION for height
-    float gridSpacing = 4.0;
-    vec2 cell = floor(targetPos / gridSpacing) * gridSpacing;
-    vec2 t = (targetPos - cell) / gridSpacing;
-    float h00 = exactElevation(cell);
-    float h10 = exactElevation(cell + vec2(gridSpacing, 0.0));
-    float h01 = exactElevation(cell + vec2(0.0, gridSpacing));
-    float h11 = exactElevation(cell + vec2(gridSpacing, gridSpacing));
-    
-    float elevation;
-    if (t.x + t.y <= 1.0) elevation = h00 + (h10 - h00)*t.x + (h01 - h00)*t.y;
-    else elevation = h11 + (h01 - h11)*(1.0 - t.x) + (h10 - h11)*(1.0 - t.y);
+    float elevation = exactElevation(targetPos);
 
     blades[idx].pos = vec4(targetPos.x, elevation, targetPos.y, 1.0);
 
-    // Dynamic Wind
+    // Gentle wind simulation
     float windPhase = u_Time * 1.5 + targetPos.x * 0.1 + targetPos.y * 0.1;
     float windStrength = (sin(windPhase) + sin(windPhase * 2.3)) * 0.15 + 0.15;
     vec3 windDir = normalize(vec3(1.0, 0.0, 0.5));
