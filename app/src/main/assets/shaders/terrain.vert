@@ -7,8 +7,6 @@ uniform vec3 u_CameraPos;
 out vec3 vWorldPos;
 out vec3 vNormal;
 
-const float EARTH_CIRCUMFERENCE = 40030173.0;
-
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
 float noise(vec2 p) {
     vec2 i = floor(p); vec2 f = fract(p);
@@ -22,11 +20,12 @@ float getH(vec2 p) {
 
 void main() {
     vec3 worldPos = aPosition;
-    vec2 snapped = floor(u_CameraPos.xz);
+    // Align with grass resolution
+    vec2 snapped = floor(u_CameraPos.xz / 1.0) * 1.0; 
     worldPos.xz += snapped;
     worldPos.y = getH(worldPos.xz);
 
-    // ANALYTICAL NORMALS: Sample adjacent points to find the slope
+    // Analytical normal generation using surrounding height data
     float e = 0.1;
     float hX = getH(worldPos.xz + vec2(e, 0.0));
     float hZ = getH(worldPos.xz + vec2(0.0, e));
