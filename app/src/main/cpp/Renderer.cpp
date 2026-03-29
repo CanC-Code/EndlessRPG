@@ -1,5 +1,4 @@
 #include "Renderer.h"
-#include "AssetManager.h"
 #include <cmath>
 #include <android/log.h>
 
@@ -7,13 +6,14 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), grassSSBO(0) {}
+GrassRenderer::~GrassRenderer() {}
 
 void GrassRenderer::generateTerrainGrid() {
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
     int gridWidth = 150, gridDepth = 150;
 
-    [span_0](start_span)[span_1](start_span)// Fixed: Using 3 floats (X, Y, Z) per vertex to match shader vec3 expectation[span_0](end_span)[span_1](end_span)
+    // Use 3 floats (X, Y, Z) per vertex
     for(int z = 0; z < gridDepth; z++) {
         for(int x = 0; x < gridWidth; x++) {
             vertices.push_back(x - gridWidth / 2.0f);
@@ -45,14 +45,14 @@ void GrassRenderer::generateTerrainGrid() {
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainEBO);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
-    // Stride is 3 * sizeof(float)
+    // Ensure layout maps correctly to vec3 (stride is 3 * sizeof(float))
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 }
 
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
     moveX = mx; 
-    moveY = my; [span_2](start_span)// Normalized from Kotlin[span_2](end_span)
+    moveY = my; 
     camYaw += lx * 0.005f; 
     camPitch += ly * 0.005f;
     if (camPitch > 1.5f) camPitch = 1.5f;
@@ -60,3 +60,6 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
     isThirdPerson = tp;
     cameraZoom = zoom;
 }
+
+// In your render() loop, remember to calculate u_CamForward to pass to the compute shader!
+// vec3 camForward = vec3(cos(camPitch) * sin(camYaw), -sin(camPitch), cos(camPitch) * cos(camYaw));
