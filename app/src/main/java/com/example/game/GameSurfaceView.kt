@@ -8,12 +8,7 @@ import kotlin.math.hypot
 import kotlin.math.min
 
 class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
-    // Ensure these map exactly to your JNI functions in NativeEngine.cpp
-    private external fun updateInput(mx: Float, my: Float, lx: Float, ly: Float, tp: Boolean, zoom: Float)
-    private external fun surfaceCreated(surface: android.view.Surface)
-    private external fun surfaceChanged(width: Int, height: Int)
-    private external fun releaseNativeSurface()
-
+    
     private var joyBaseX = 0f
     private var joyBaseY = 0f
     private var joyCurrentX = 0f
@@ -61,16 +56,25 @@ class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
                 lastTouchX = event.x
                 lastTouchY = event.y
 
-                updateInput(normX, normY, lookDeltaX, lookDeltaY, true, 15f)
+                // Call the JNI bridge appropriately (Adjust if using a NativeEngine object!)
+                (context as MainActivity).updateInput(normX, normY, lookDeltaX, lookDeltaY, true, 15f)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                updateInput(0f, 0f, 0f, 0f, true, 15f)
+                (context as MainActivity).updateInput(0f, 0f, 0f, 0f, true, 15f)
             }
         }
         return true
     }
 
-    override fun surfaceCreated(holder: SurfaceHolder) { surfaceCreated(holder.surface) }
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) { surfaceChanged(w, h) }
-    override fun surfaceDestroyed(holder: SurfaceHolder) { releaseNativeSurface() }
+    override fun surfaceCreated(holder: SurfaceHolder) {
+        // Handled in MainActivity or RenderLoop lifecycle
+    }
+
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
+        // Handled in MainActivity or RenderLoop lifecycle
+    }
+
+    override fun surfaceDestroyed(holder: SurfaceHolder) {
+        // Handled in MainActivity or RenderLoop lifecycle
+    }
 }
