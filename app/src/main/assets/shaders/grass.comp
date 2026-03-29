@@ -1,7 +1,14 @@
 #version 310 es
 layout(local_size_x = 256) in;
-struct Blade { vec4 pos; vec4 dir; };
-layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
+
+struct Blade { 
+    vec4 pos; 
+    vec4 dir; 
+};
+
+layout(std430, binding = 0) buffer GrassBuffer { 
+    Blade blades[]; 
+};
 
 uniform vec3 u_CameraPos;
 uniform vec3 u_CamForward;
@@ -12,21 +19,30 @@ float noise(vec2 p) {
     vec2 u = f*f*(3.0-2.0*f);
     return mix(mix(hash(i+vec2(0,0)), hash(i+vec2(1,0)), u.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), u.x), u.y);
 }
-float getH(vec2 p) { return noise(p * 0.05) * 15.0 + noise(p * 0.1) * 5.0; }
+
+float getH(vec2 p) { 
+    return noise(p * 0.05) * 15.0 + noise(p * 0.1) * 5.0; 
+}
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
-    float spacing = 1.0; // Same as terrain resolution!
+    if (idx >= uint(blades.length())) return;
+
+    // Spacing MUST perfectly match the terrain.vert snapping (1.0)
+    float spacing = 1.0; 
     vec2 gridPos = vec2(float(idx % 256u), float(idx / 256u)) * spacing;
     vec2 worldXZ = gridPos + floor(u_CameraPos.xz / spacing) * spacing - (128.0 * spacing);
 
     // Frustum Culling
     vec3 toBlade = vec3(worldXZ.x, 0.0, worldXZ.y) - u_CameraPos;
     if (length(toBlade) > 80.0 || dot(normalize(toBlade), u_CamForward) < 0.15) {
-        blades[idx].pos.w = 0.0; // Hide
+        blades[idx].pos.w = 0.0; // W=0 means hide this blade
         return;
     }
 
     float h = getH(worldXZ);
     blades[idx].pos = vec4(worldXZ.x, h, worldXZ.y, 1.0);
+    
+    // Randomize wind direction slightly
+    blades[idx].dir = vec4(0.0, 1.0, 0.0, 0.0);
 }
