@@ -8,6 +8,7 @@ import kotlin.math.hypot
 import kotlin.math.min
 
 class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
+    // Ensure these map exactly to your JNI functions in NativeEngine.cpp
     private external fun updateInput(mx: Float, my: Float, lx: Float, ly: Float, tp: Boolean, zoom: Float)
     private external fun surfaceCreated(surface: android.view.Surface)
     private external fun surfaceChanged(width: Int, height: Int)
@@ -18,7 +19,6 @@ class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
     private var joyCurrentX = 0f
     private var joyCurrentY = 0f
     
-    // Adding camera look variables
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var lookDeltaX = 0f
@@ -42,20 +42,20 @@ class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
                 joyCurrentX = event.x
                 joyCurrentY = event.y
                 
-                // Calculate movement
                 val dx = joyCurrentX - joyBaseX
                 val dy = joyCurrentY - joyBaseY
                 val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
                 
                 var normX = 0f
                 var normY = 0f
-                if (dist > 20f) {
+                
+                if (dist > 20f) { // Deadzone
                     val scale = min(dist, 150f) / 150f
                     normX = (dx / dist) * scale
-                    normY = -(dy / dist) * scale // Y inversion fixed
+                    // Invert Y axis here: Screen goes down, 3D world forward goes up/negative
+                    normY = -(dy / dist) * scale 
                 }
 
-                // Calculate Look delta (simple generic touch for right now)
                 lookDeltaX = event.x - lastTouchX
                 lookDeltaY = event.y - lastTouchY
                 lastTouchX = event.x
