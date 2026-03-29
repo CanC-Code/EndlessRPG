@@ -1,86 +1,41 @@
 package com.example.game
 
-import android.content.Context
-import android.view.MotionEvent
-import android.view.SurfaceHolder
-import android.view.SurfaceView
-import kotlin.math.hypot
-import kotlin.math.min
+import android.content.res.AssetManager
+import androidx.appcompat.app.AppCompatActivity
+import android.os.Bundle
+import android.widget.FrameLayout
 
-class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
+class MainActivity : AppCompatActivity() {
+    init { System.loadLibrary("procedural_engine") }
     
-    // CRITICAL FIX: Restoring the Native Surface bindings so EGL gets the window!
-    private external fun surfaceCreated(surface: android.view.Surface)
-    private external fun surfaceChanged(width: Int, height: Int)
-    private external fun releaseNativeSurface()
-
-    private var joyBaseX = 0f
-    private var joyBaseY = 0f
-    private var joyCurrentX = 0f
-    private var joyCurrentY = 0f
+    private external fun initAssetManager(am: AssetManager)
+    private external fun initEngine()
+    private external fun shutdownEngine()
     
-    private var lastTouchX = 0f
-    private var lastTouchY = 0f
-    private var lookDeltaX = 0f
-    private var lookDeltaY = 0f
+    external fun updateInput(mx: Float, my: Float, lx: Float, ly: Float, tp: Boolean, zoom: Float)
 
-    init {
-        holder.addCallback(this)
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        
+        initAssetManager(assets)
+        initEngine()
+        
+        // Build a layout stack programmatically
+        val rootLayout = FrameLayout(this)
+        
+        // 1. The C++ Engine Display (Bottom layer)
+        val gameView = GameSurfaceView(this)
+        rootLayout.addView(gameView)
+        
+        // 2. The Joystick UI (Top layer)
+        val uiOverlay = JoystickOverlayView(this)
+        rootLayout.addView(uiOverlay)
+        
+        setContentView(rootLayout)
     }
 
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                joyBaseX = event.x
-                joyBaseY = event.y
-                joyCurrentX = event.x
-                joyCurrentY = event.y
-                lastTouchX = event.x
-                lastTouchY = event.y
-            }
-            MotionEvent.ACTION_MOVE -> {
-                joyCurrentX = event.x
-                joyCurrentY = event.y
-                
-                val dx = joyCurrentX - joyBaseX
-                val dy = joyCurrentY - joyBaseY
-                val dist = hypot(dx.toDouble(), dy.toDouble()).toFloat()
-                
-                var normX = 0f
-                var normY = 0f
-                
-                if (dist > 20f) { // Deadzone
-                    val scale = min(dist, 150f) / 150f
-                    normX = (dx / dist) * scale
-                    // Invert Y axis: Screen goes down, 3D world forward goes up/negative
-                    normY = -(dy / dist) * scale 
-                }
-
-                lookDeltaX = event.x - lastTouchX
-                lookDeltaY = event.y - lastTouchY
-                lastTouchX = event.x
-                lastTouchY = event.y
-
-                // Route inputs to MainActivity's JNI bridge
-                (context as MainActivity).updateInput(normX, normY, lookDeltaX, lookDeltaY, true, 15f)
-            }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                (context as MainActivity).updateInput(0f, 0f, 0f, 0f, true, 15f)
-            }
-        }
-        return true
-    }
-
-    override fun surfaceCreated(holder: SurfaceHolder) {
-        // This passes the active rendering surface down to C++ EGLCore!
-        surfaceCreated(holder.surface) 
-    }
-
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
-        surfaceChanged(w, h)
-    }
-
-    override fun surfaceDestroyed(holder: SurfaceHolder) {
-        releaseNativeSurface()
+    override fun onDestroy() {
+        super.onDestroy()
+        shutdownEngine()
     }
 }
