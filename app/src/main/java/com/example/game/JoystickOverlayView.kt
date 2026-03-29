@@ -11,23 +11,40 @@ import kotlin.math.min
 
 class JoystickOverlayView(context: Context) : View(context) {
 
-    private val paintBase = Paint().apply { color = Color.argb(80, 255, 255, 255); style = Paint.Style.FILL }
-    private val paintThumb = Paint().apply { color = Color.argb(150, 255, 255, 255); style = Paint.Style.FILL }
+    // INCREASED OPACITY: Changed alpha from 80/150 to 255 (Full Opaque)
+    // Using a light gray for the base and white for the thumb for better contrast
+    private val paintBase = Paint().apply { 
+        color = Color.argb(180, 100, 100, 100) // Semi-opaque gray base
+        style = Paint.Style.FILL 
+        isAntiAlias = true
+    }
+    private val paintThumb = Paint().apply { 
+        color = Color.argb(255, 255, 255, 255) // Pure opaque white thumb
+        style = Paint.Style.FILL 
+        isAntiAlias = true
+    }
 
     private var leftPointerId = -1
     private var rightPointerId = -1
 
-    // Left Joy Logic
-    private var joyActive = false
     private var joyBaseX = 0f
     private var joyBaseY = 0f
     private var joyCurrX = 0f
     private var joyCurrY = 0f
     private val maxRadius = 150f
 
-    // Right Camera Logic
     private var lastLookX = 0f
     private var lastLookY = 0f
+
+    // This sets the default position once the screen size is known
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        // Default "Home" position: Bottom-Left quadrant
+        joyBaseX = w * 0.15f
+        joyBaseY = h * 0.75f
+        joyCurrX = joyBaseX
+        joyCurrY = joyBaseY
+    }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val action = event.actionMasked
@@ -40,13 +57,11 @@ class JoystickOverlayView(context: Context) : View(context) {
 
         when (action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                // If touching the left side and we don't have an active left finger
                 if (x < halfScreen && leftPointerId == -1) {
                     leftPointerId = pointerId
-                    joyActive = true
-                    joyBaseX = x
-                    joyBaseY = y
-                    joyCurrX = x
-                    joyCurrY = y
+                    // Optional: Uncomment below to make the joystick jump to touch position
+                    // joyBaseX = x; joyBaseY = y 
                 } else if (x >= halfScreen && rightPointerId == -1) {
                     rightPointerId = pointerId
                     lastLookX = x
@@ -77,7 +92,7 @@ class JoystickOverlayView(context: Context) : View(context) {
 
                         if (dist > 20f) { // Deadzone
                             normX = (joyCurrX - joyBaseX) / maxRadius
-                            normY = -((joyCurrY - joyBaseY) / maxRadius) // Invert Y
+                            normY = -((joyCurrY - joyBaseY) / maxRadius) 
                         }
                     } else if (pId == rightPointerId) {
                         lookDeltaX = px - lastLookX
@@ -86,14 +101,15 @@ class JoystickOverlayView(context: Context) : View(context) {
                         lastLookY = py
                     }
                 }
-
                 (context as MainActivity).updateInput(normX, normY, lookDeltaX, lookDeltaY, true, 15f)
-                invalidate() // Redraw the joystick
+                invalidate()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
                 if (pointerId == leftPointerId) {
                     leftPointerId = -1
-                    joyActive = false
+                    // SNAP BACK: Thumb returns to base center
+                    joyCurrX = joyBaseX
+                    joyCurrY = joyBaseY
                     (context as MainActivity).updateInput(0f, 0f, 0f, 0f, true, 15f)
                 } else if (pointerId == rightPointerId) {
                     rightPointerId = -1
@@ -106,9 +122,8 @@ class JoystickOverlayView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (joyActive) {
-            canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, paintBase)
-            canvas.drawCircle(joyCurrX, joyCurrY, maxRadius * 0.4f, paintThumb)
-        }
+        // REMOVED 'if (joyActive)': The joystick now draws every frame
+        canvas.drawCircle(joyBaseX, joyBaseY, maxRadius, paintBase)
+        canvas.drawCircle(joyCurrX, joyCurrY, maxRadius * 0.45f, paintThumb)
     }
 }
