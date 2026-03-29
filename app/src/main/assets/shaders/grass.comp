@@ -10,14 +10,19 @@ uniform vec3 u_CameraPos;
 const float EARTH_RADIUS = 6371000.0;
 const float EARTH_CIRCUMFERENCE = 2.0 * 3.14159265 * EARTH_RADIUS;
 
-float hash3(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+float hash3(vec3 p) { 
+    return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+}
+
 float noise3(vec3 x) {
     vec3 i = floor(x); vec3 f = fract(x);
     vec3 u = f * f * (3.0 - 2.0 * f);
-    float a0 = hash3(i + vec3(0,0,0)); float a1 = hash3(i + vec3(1,0,0));
+    float a0 = hash3(i + vec3(0,0,0));
+    float a1 = hash3(i + vec3(1,0,0));
     float a2 = hash3(i + vec3(0,1,0)); float a3 = hash3(i + vec3(1,1,0));
     float a4 = hash3(i + vec3(0,0,1)); float a5 = hash3(i + vec3(1,0,1));
-    float a6 = hash3(i + vec3(0,1,1)); float a7 = hash3(i + vec3(1,1,1));
+    float a6 = hash3(i + vec3(0,1,1));
+    float a7 = hash3(i + vec3(1,1,1));
     return mix(mix(mix(a0, a1, u.x), mix(a2, a3, u.x), u.y), mix(mix(a4, a5, u.x), mix(a6, a7, u.x), u.y), u.z);
 }
 
@@ -35,13 +40,14 @@ void main() {
     // Map 1D index to a logical 2D grid
     uint gx = idx % 256u;
     uint gy = idx / 256u;
-    float spacing = 0.8; 
-
+    
+    float spacing = 0.8;
     // Anchor the grid to the camera
     vec2 snappedCam = floor(u_CameraPos.xz / spacing) * spacing;
+    
     float startX = snappedCam.x - (256.0 * spacing / 2.0);
     float startZ = snappedCam.y - (256.0 * spacing / 2.0);
-
+    
     vec2 targetPos = vec2(startX + float(gx) * spacing, startZ + float(gy) * spacing);
 
     // Jitter to prevent uniform grid
@@ -49,8 +55,8 @@ void main() {
     float jz = fract(sin(dot(targetPos, vec2(93.989, 67.345))) * 43758.5453) - 0.5;
     targetPos += vec2(jx, jz) * spacing * 0.8;
 
-    // Calculate elevation using faceted interpolation so it matches the terrain's 4.0 grid exactly
-    float gridSpacing = 4.0;
+    // CRITICAL FIX: Interpolate exactly on the 1.0 boundaries to match C++ terrain mesh!
+    float gridSpacing = 1.0; 
     vec2 cell = floor(targetPos / gridSpacing) * gridSpacing;
     vec2 t = (targetPos - cell) / gridSpacing;
     
@@ -62,12 +68,13 @@ void main() {
     float elevation;
     if (t.x + t.y <= 1.0) elevation = h00 + (h10 - h00)*t.x + (h01 - h00)*t.y;
     else elevation = h11 + (h01 - h11)*(1.0 - t.x) + (h10 - h11)*(1.0 - t.y);
-
+    
     blades[idx].pos = vec4(targetPos.x, elevation, targetPos.y, 1.0);
 
     // Dynamic Wind Output
     float windPhase = u_Time * 1.5 + targetPos.x * 0.1 + targetPos.y * 0.1;
     float windStrength = (sin(windPhase) + sin(windPhase * 2.3)) * 0.15 + 0.15;
     vec3 windDir = normalize(vec3(1.0, 0.0, 0.5));
+    
     blades[idx].dir = vec4(windDir * windStrength, 0.0);
 }
