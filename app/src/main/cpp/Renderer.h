@@ -11,6 +11,10 @@ public:
     
     void init();
     void render(int width, int height);
+    
+    // NEW: Added this method to satisfy RenderLoop.cpp
+    void updateAndRender(float time, float dt, int width, int height);
+    
     void updateInput(float mx, float my, float lx, float ly, bool tp, float zoom);
 
 private:
