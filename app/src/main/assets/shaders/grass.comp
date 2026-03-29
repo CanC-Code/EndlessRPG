@@ -4,22 +4,29 @@ struct Blade { vec4 pos; vec4 dir; };
 layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
 
 uniform vec3 u_CameraPos;
-uniform vec3 u_CamForward; // Pass this from C++
+uniform vec3 u_CamForward;
+
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float noise(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p);
+    vec2 u = f*f*(3.0-2.0*f);
+    return mix(mix(hash(i+vec2(0,0)), hash(i+vec2(1,0)), u.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), u.x), u.y);
+}
+float getH(vec2 p) { return noise(p * 0.05) * 15.0 + noise(p * 0.1) * 5.0; }
 
 void main() {
     uint idx = gl_GlobalInvocationID.x;
-    float spacing = 0.6;
+    float spacing = 1.0; // Same as terrain resolution!
     vec2 gridPos = vec2(float(idx % 256u), float(idx / 256u)) * spacing;
     vec2 worldXZ = gridPos + floor(u_CameraPos.xz / spacing) * spacing - (128.0 * spacing);
 
-    // FRUSTUM CULLING: Simple distance + forward check
+    // Frustum Culling
     vec3 toBlade = vec3(worldXZ.x, 0.0, worldXZ.y) - u_CameraPos;
-    if (length(toBlade) > 60.0 || dot(normalize(toBlade), u_CamForward) < 0.2) {
-        blades[idx].pos.w = 0.0; // Hide blade
+    if (length(toBlade) > 80.0 || dot(normalize(toBlade), u_CamForward) < 0.15) {
+        blades[idx].pos.w = 0.0; // Hide
         return;
     }
 
-    // Logic for elevation and slope alignment
-    float h = 0.0; // Sample your noise here
+    float h = getH(worldXZ);
     blades[idx].pos = vec4(worldXZ.x, h, worldXZ.y, 1.0);
 }
