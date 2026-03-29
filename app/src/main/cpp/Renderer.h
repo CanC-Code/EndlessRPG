@@ -1,4 +1,5 @@
 #pragma once
+
 #include <GLES3/gl31.h>
 #include <vector>
 #include <string>
@@ -16,14 +17,20 @@ private:
     void generateTerrainGrid();
     void setupShaders();
     
+    // OpenGL Objects
     GLuint terrainVAO, terrainVBO, terrainEBO;
     GLuint terrainProgram;
     GLuint grassProgram, grassComputeProgram;
     GLuint grassSSBO;
     
-    float cameraX = 0, cameraY = 15, cameraZ = 0;
-    float camYaw = 0, camPitch = -0.5f;
-    float moveX = 0, moveY = 0;
+    // Camera & Input State
+    float cameraX = 0.0f;
+    float cameraY = 15.0f;
+    float cameraZ = 0.0f;
+    float camYaw = 0.0f;
+    float camPitch = -0.5f;
+    float moveX = 0.0f;
+    float moveY = 0.0f;
     float cameraZoom = 15.0f;
     bool isThirdPerson = true;
     
