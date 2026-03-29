@@ -20,12 +20,13 @@ float getH(vec2 p) {
 
 void main() {
     vec3 worldPos = aPosition;
-    // Align with grass resolution
+    
+    // Snap to the 1.0 unit C++ grid to prevent crawling
     vec2 snapped = floor(u_CameraPos.xz / 1.0) * 1.0; 
     worldPos.xz += snapped;
     worldPos.y = getH(worldPos.xz);
 
-    // Analytical normal generation using surrounding height data
+    // Analytical Normals for realistic lighting
     float e = 0.1;
     float hX = getH(worldPos.xz + vec2(e, 0.0));
     float hZ = getH(worldPos.xz + vec2(0.0, e));
