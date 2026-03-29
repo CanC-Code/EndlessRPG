@@ -87,6 +87,13 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
 }
 
 void GrassRenderer::render(int width, int height) {
-    // Basic render loop placeholder to satisfy the compiler
-    // Your matrix math, glUseProgram, and glDrawElements go here.
+    // Basic render loop placeholder
+}
+
+// NEW: Implementation to satisfy RenderLoop.cpp and pass time to shaders
+void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
+    // Here we can eventually pass 'time' to the shader for wind animation!
+    // u_Time = time;
+    
+    render(width, height);
 }
