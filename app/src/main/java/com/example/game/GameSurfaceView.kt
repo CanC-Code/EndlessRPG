@@ -9,6 +9,11 @@ import kotlin.math.min
 
 class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
     
+    // CRITICAL FIX: Restoring the Native Surface bindings so EGL gets the window!
+    private external fun surfaceCreated(surface: android.view.Surface)
+    private external fun surfaceChanged(width: Int, height: Int)
+    private external fun releaseNativeSurface()
+
     private var joyBaseX = 0f
     private var joyBaseY = 0f
     private var joyCurrentX = 0f
@@ -47,7 +52,7 @@ class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
                 if (dist > 20f) { // Deadzone
                     val scale = min(dist, 150f) / 150f
                     normX = (dx / dist) * scale
-                    // Invert Y axis here: Screen goes down, 3D world forward goes up/negative
+                    // Invert Y axis: Screen goes down, 3D world forward goes up/negative
                     normY = -(dy / dist) * scale 
                 }
 
@@ -56,7 +61,7 @@ class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
                 lastTouchX = event.x
                 lastTouchY = event.y
 
-                // Call the JNI bridge appropriately (Adjust if using a NativeEngine object!)
+                // Route inputs to MainActivity's JNI bridge
                 (context as MainActivity).updateInput(normX, normY, lookDeltaX, lookDeltaY, true, 15f)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -67,14 +72,15 @@ class GameSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Ca
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        // Handled in MainActivity or RenderLoop lifecycle
+        // This passes the active rendering surface down to C++ EGLCore!
+        surfaceCreated(holder.surface) 
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, w: Int, h: Int) {
-        // Handled in MainActivity or RenderLoop lifecycle
+        surfaceChanged(w, h)
     }
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
-        // Handled in MainActivity or RenderLoop lifecycle
+        releaseNativeSurface()
     }
 }
