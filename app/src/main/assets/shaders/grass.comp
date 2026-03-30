@@ -1,48 +1,31 @@
 #version 310 es
-layout(local_size_x = 256) in;
+layout(local_size_x = 64) in;
 
-struct Blade { 
-    vec4 pos; 
-    vec4 dir; 
+// A standard structure for the grass buffer
+struct GrassData {
+    vec4 position; // xyz position, w could be scale/rotation
 };
 
-layout(std430, binding = 0) buffer GrassBuffer { 
-    Blade blades[]; 
+layout(std430, binding = 0) buffer GrassBuffer {
+    GrassData blades[];
 };
 
-uniform vec3 u_CameraPos;
-uniform vec3 u_CamForward;
+const float TERRAIN_AMPLITUDE = 2.5;
+const float TERRAIN_FREQUENCY = 0.2;
 
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-float noise(vec2 p) {
-    vec2 i = floor(p); vec2 f = fract(p);
-    vec2 u = f*f*(3.0-2.0*f);
-    return mix(mix(hash(i+vec2(0,0)), hash(i+vec2(1,0)), u.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), u.x), u.y);
-}
-
-float getH(vec2 p) { 
-    return noise(p * 0.05) * 15.0 + noise(p * 0.1) * 5.0; 
+float getTerrainHeight(float x, float z) {
+    return TERRAIN_AMPLITUDE * sin(x * TERRAIN_FREQUENCY) * cos(z * TERRAIN_FREQUENCY);
 }
 
 void main() {
-    uint idx = gl_GlobalInvocationID.x;
-    if (idx >= uint(blades.length())) return;
-
-    // Spacing MUST perfectly match the terrain.vert snapping (1.0)
-    float spacing = 1.0; 
-    vec2 gridPos = vec2(float(idx % 256u), float(idx / 256u)) * spacing;
-    vec2 worldXZ = gridPos + floor(u_CameraPos.xz / spacing) * spacing - (128.0 * spacing);
-
-    // Frustum Culling
-    vec3 toBlade = vec3(worldXZ.x, 0.0, worldXZ.y) - u_CameraPos;
-    if (length(toBlade) > 80.0 || dot(normalize(toBlade), u_CamForward) < 0.15) {
-        blades[idx].pos.w = 0.0; // W=0 means hide this blade
-        return;
-    }
-
-    float h = getH(worldXZ);
-    blades[idx].pos = vec4(worldXZ.x, h, worldXZ.y, 1.0);
+    uint index = gl_GlobalInvocationID.x;
     
-    // Randomize wind direction slightly
-    blades[idx].dir = vec4(0.0, 1.0, 0.0, 0.0);
+    // Read the current position of this grass blade instance
+    vec3 pos = blades[index].position.xyz;
+    
+    // LOGIC FIX: Update the Y coordinate so the grass roots sit exactly on the terrain
+    pos.y = getTerrainHeight(pos.x, pos.z);
+    
+    // Write the corrected position back to the buffer
+    blades[index].position.xyz = pos;
 }
