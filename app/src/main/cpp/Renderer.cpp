@@ -4,7 +4,6 @@
 #include <android/log.h>
 #include <vector>
 #include <cstdlib>
-#include <android/asset_manager.h> // Fixed: Added for AAssetManager
 
 #define LOG_TAG "ProceduralEngine"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -12,7 +11,6 @@
 static float gTime = 0.0f;
 static GLuint emptyVAO = 0;
 
-// Fixed: Using sinf and cosf with <cmath> included
 float getTerrainHeight(float x, float z) {
     float h = sinf(x * 0.04f) * 4.0f;
     h += cosf(z * 0.03f) * 3.0f;
@@ -20,7 +18,7 @@ float getTerrainHeight(float x, float z) {
     return h;
 }
 
-// --- Matrix Math Helpers ---
+// Matrix Helpers
 void loadIdentity(float* m) { for(int i=0; i<16; i++) m[i] = (i%5 == 0) ? 1.0f : 0.0f; }
 void perspective(float* m, float fovY, float aspect, float zNear, float zFar) {
     float f = 1.0f / tanf(fovY / 2.0f);
@@ -87,7 +85,6 @@ void GrassRenderer::setupShaders(AAssetManager* assetManager) {
         glLinkProgram(terrainProgram);
         free(vsSrc); free(fsSrc);
     }
-
     char* csSrc = loadShaderFile(assetManager, "shaders/grass.comp");
     if (csSrc) {
         grassComputeProgram = glCreateProgram();
@@ -95,7 +92,6 @@ void GrassRenderer::setupShaders(AAssetManager* assetManager) {
         glLinkProgram(grassComputeProgram);
         free(csSrc);
     }
-
     char* gvsSrc = loadShaderFile(assetManager, "shaders/grass.vert");
     char* gfsSrc = loadShaderFile(assetManager, "shaders/grass.frag");
     if (gvsSrc && gfsSrc) {
@@ -105,7 +101,6 @@ void GrassRenderer::setupShaders(AAssetManager* assetManager) {
         glLinkProgram(grassProgram);
         free(gvsSrc); free(gfsSrc);
     }
-
     glGenBuffers(1, &grassSSBO);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, grassSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER, 65536 * 32, nullptr, GL_DYNAMIC_DRAW);
@@ -149,11 +144,11 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height,
     gTime = time;
     if (terrainVAO == 0) { generateTerrainGrid(); setupShaders(assetManager); }
 
-    // PHYSICS FIX: Character updates position and gravity
-    float currentGround = getTerrainHeight(playerCharacter.getX(), playerCharacter.getZ());
-    playerCharacter.update(dt, moveX, moveY, camYaw, currentGround);
+    // PHYSICS UPDATE
+    float ground = getTerrainHeight(playerCharacter.getX(), playerCharacter.getZ());
+    playerCharacter.update(dt, moveX, moveY, camYaw, ground);
 
-    // Sync Camera to Character eyes
+    // CAMERA SYNC
     cameraX = playerCharacter.getX();
     cameraZ = playerCharacter.getZ();
     cameraY = playerCharacter.getY() + 1.8f; 
@@ -181,7 +176,6 @@ void GrassRenderer::render(int width, int height) {
         glDispatchCompute(256, 1, 1);
         glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     }
-
     if (terrainProgram) {
         glUseProgram(terrainProgram);
         glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_MVP"), 1, GL_FALSE, mvp);
@@ -189,7 +183,6 @@ void GrassRenderer::render(int width, int height) {
         glBindVertexArray(terrainVAO);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
     }
-
     if (grassProgram) {
         glUseProgram(grassProgram);
         glUniformMatrix4fv(glGetUniformLocation(grassProgram, "u_MVP"), 1, GL_FALSE, mvp);
