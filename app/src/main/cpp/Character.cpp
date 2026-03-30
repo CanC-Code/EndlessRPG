@@ -1,50 +1,43 @@
 #include "Character.h"
 #include <cmath>
-#include <algorithm> // FIXED: Required for std::max
 
-// THE WORLD TRUTH: This math must match Renderer.cpp exactly
-float getPhysicsGroundHeight(float x, float z) {
-    float h = sinf(x * 0.04f) * 4.0f;
-    h += cosf(z * 0.03f) * 3.0f;
-    h += sinf((x + z) * 0.1f) * 1.5f;
-    return h;
+// Terrain generation parameters (Must match terrain.vert!)
+const float TERRAIN_AMPLITUDE = 2.5f;
+const float TERRAIN_FREQUENCY = 0.2f;
+
+// The distance from the center of your character model to its feet
+// Adjust this value based on the scale of your character!
+const float CHARACTER_HALF_HEIGHT = 1.0f; 
+
+Character::Character() {
+    position = {0.0f, 0.0f, 0.0f};
+    velocity = {0.0f, 0.0f, 0.0f};
+    speed = 5.0f;
 }
 
-Character::Character() : position(0.0f, 10.0f, 0.0f), velocity(0.0f, 0.0f, 0.0f) {}
-
-Character::~Character() {}
-
-void Character::update(float dt, float mx, float my, float yaw, float groundHeightInput) {
-    // 1. Horizontal Movement
-    float cosY = cosf(yaw);
-    float sinY = sinf(yaw);
-
-    // Apply movement relative to camera yaw
-    position.x += (mx * cosY + my * sinY) * moveSpeed * dt;
-    position.z += (-my * cosY + mx * sinY) * moveSpeed * dt;
-
-    // 2. Probing the Ground at NEW position
-    // This prevents the "clipping" issue by checking the height exactly where we just moved
-    float currentGroundLevel = getPhysicsGroundHeight(position.x, position.z);
-
-    // 3. Vertical Physics (Gravity)
-    if (!isGrounded) {
-        velocity.y += gravity * dt;
-    } else {
-        // Zero out downward momentum, but allow upward (for jumping/hills)
-        velocity.y = std::max(0.0f, velocity.y);
-    }
-
-    position.y += velocity.y * dt;
-
-    // 4. Ground Collision & Constraint
-    // The "Feet" of the character is position.y.
-    if (position.y < currentGroundLevel) {
-        position.y = currentGroundLevel; // Snap to the grass surface
-        velocity.y = 0.0f;              // Stop falling
-        isGrounded = true;
-    } else {
-        // We are grounded if we are resting precisely on the terrain
-        isGrounded = (position.y <= currentGroundLevel + 0.01f);
-    }
+Character::~Character() {
+    // Cleanup if necessary
 }
+
+// Replicate the exact mathematical formula used in terrain.vert
+float Character::getTerrainHeight(float x, float z) {
+    return TERRAIN_AMPLITUDE * std::sin(x * TERRAIN_FREQUENCY) * std::cos(z * TERRAIN_FREQUENCY);
+}
+
+void Character::update(float deltaTime, float joystickX, float joystickY) {
+    // 1. Update horizontal movement based on joystick input
+    position.x += joystickX * speed * deltaTime;
+    position.z += joystickY * speed * deltaTime;
+    
+    // 2. Calculate the ground height at the new X and Z coordinates
+    float groundHeight = getTerrainHeight(position.x, position.z);
+    
+    // 3. LOGIC FIX: Set the character's Y position to the ground height 
+    // PLUS the offset so the model stands directly on top of the terrain
+    position.y = groundHeight + CHARACTER_HALF_HEIGHT;
+}
+
+// Standard getters
+float Character::getX() const { return position.x; }
+float Character::getY() const { return position.y; }
+float Character::getZ() const { return position.z; }
