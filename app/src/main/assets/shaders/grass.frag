@@ -1,21 +1,16 @@
 #version 310 es
-precision highp float;
-in vec3 vNormal;
-in vec3 vWorldPos;
-in float vHeightTaper;
-uniform vec3 u_CameraPos;
+precision mediump float;
+
+in vec2 TexCoord;
 out vec4 FragColor;
 
 void main() {
-    vec3 lightDir = normalize(vec3(0.5, 0.8, 0.2));
-    vec3 viewDir = normalize(u_CameraPos - vWorldPos);
+    // Simple procedural grass styling (dark green at the root, vibrant green at the tip)
+    vec3 baseColor = vec3(0.1, 0.4, 0.1);
+    vec3 tipColor  = vec3(0.3, 0.7, 0.2);
     
-    vec3 baseColor = mix(vec3(0.05, 0.15, 0.02), vec3(0.3, 0.5, 0.1), vHeightTaper);
-    float diff = max(dot(vNormal, lightDir), 0.2);
+    // TexCoord.y represents the height along the blade of grass
+    vec3 finalColor = mix(baseColor, tipColor, TexCoord.y);
     
-    // Subsurface Scattering
-    float sss = pow(max(dot(viewDir, -lightDir), 0.0), 3.0) * 0.6;
-    
-    vec3 finalColor = baseColor * diff + (vec3(0.6, 0.8, 0.3) * sss * vHeightTaper);
     FragColor = vec4(finalColor, 1.0);
 }
