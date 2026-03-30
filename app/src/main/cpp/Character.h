@@ -9,6 +9,8 @@ struct Vec3 {
 class Character {
 public:
     Character();
+    ~Character();
+
     void update(float dt, float moveX, float moveY, float yaw, float groundHeight);
     
     float getX() const { return position.x; }
@@ -18,8 +20,9 @@ public:
 private:
     Vec3 position;
     Vec3 velocity;
-    float eyeHeight = 1.8f;   
-    float gravity = -15.0f;   
+    
+    float eyeHeight = 1.8f;   // Player's camera height from their feet
+    float gravity = -15.0f;   // Gravity strength
     float moveSpeed = 8.0f;
     bool isGrounded = false;
 };
