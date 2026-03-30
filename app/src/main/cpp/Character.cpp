@@ -1,10 +1,12 @@
 #include "Character.h"
 #include <cmath>
 
-Character::Character() : position(0.0f, 5.0f, 0.0f), velocity(0.0f, 0.0f, 0.0f) {}
+Character::Character() : position(0.0f, 10.0f, 0.0f), velocity(0.0f, 0.0f, 0.0f) {}
+
+Character::~Character() {}
 
 void Character::update(float dt, float mx, float my, float yaw, float groundHeight) {
-    // 1. Horizontal movement based on camera angle
+    // 1. Horizontal Movement
     float cosY = cosf(yaw);
     float sinY = sinf(yaw);
     
@@ -17,7 +19,7 @@ void Character::update(float dt, float mx, float my, float yaw, float groundHeig
     }
     position.y += velocity.y * dt;
 
-    // 3. Ground Constraint: "The Floor is Solid"
+    // 3. Ground Collision & Constraint
     if (position.y < groundHeight) {
         position.y = groundHeight; 
         velocity.y = 0.0f;         
