@@ -1,19 +1,30 @@
 #version 310 es
-precision highp float;
-in vec3 vWorldPos;
-in vec3 vNormal;
-uniform vec3 u_CameraPos;
+precision mediump float;
+
+// These MUST match the 'out' variables from terrain.vert
+in vec2 TexCoord;
+in vec3 Normal;
+in vec3 FragPos;
+
 out vec4 FragColor;
 
-void main() {
-    vec3 lightDir = normalize(vec3(0.5, 0.8, 0.2));
-    float diff = max(dot(vNormal, lightDir), 0.15);
-    
-    vec3 color = mix(vec3(0.1, 0.08, 0.05), vec3(0.15, 0.2, 0.05), vNormal.y);
-    color *= diff;
+// A default directional light source
+const vec3 lightDir = normalize(vec3(0.5, 1.0, 0.3));
+const vec3 lightColor = vec3(1.0, 0.95, 0.9);
 
-    // Fast Atmospheric Fog
-    float dist = length(vWorldPos - u_CameraPos);
-    float fog = exp(-pow(dist * 0.005, 2.0));
-    FragColor = vec4(mix(vec4(0.5, 0.6, 0.7, 1.0).rgb, color, fog), 1.0);
+void main() {
+    // Base green ground color
+    vec3 objectColor = vec3(0.15, 0.45, 0.15); 
+    
+    // Ambient light
+    float ambientStrength = 0.4;
+    vec3 ambient = ambientStrength * lightColor;
+    
+    // Diffuse light
+    vec3 norm = normalize(Normal);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * lightColor;
+    
+    vec3 result = (ambient + diffuse) * objectColor;
+    FragColor = vec4(result, 1.0);
 }
