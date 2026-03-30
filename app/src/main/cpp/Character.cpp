@@ -12,7 +12,7 @@ const float CHARACTER_HALF_HEIGHT = 1.0f;
 Character::Character() {
     position = {0.0f, 0.0f, 0.0f};
     velocity = {0.0f, 0.0f, 0.0f};
-    speed = 5.0f;
+    speed = 5.0f; // Now correctly recognized by the header
 }
 
 Character::~Character() {
@@ -32,12 +32,12 @@ void Character::update(float deltaTime, float joystickX, float joystickY) {
     // 2. Calculate the ground height at the new X and Z coordinates
     float groundHeight = getTerrainHeight(position.x, position.z);
     
-    // 3. LOGIC FIX: Set the character's Y position to the ground height 
+    // 3. Set the character's Y position to the ground height 
     // PLUS the offset so the model stands directly on top of the terrain
     position.y = groundHeight + CHARACTER_HALF_HEIGHT;
 }
 
-// Standard getters
+// Standard getters (These no longer conflict with the header)
 float Character::getX() const { return position.x; }
 float Character::getY() const { return position.y; }
 float Character::getZ() const { return position.z; }
