@@ -4,6 +4,7 @@
 #include <android/log.h>
 #include <vector>
 #include <cstdlib>
+#include <android/asset_manager.h>
 
 #define LOG_TAG "ProceduralEngine"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -53,7 +54,10 @@ void multiplyMatrix(float* out, const float* a, const float* b) {
 
 char* GrassRenderer::loadShaderFile(AAssetManager* assetManager, const char* filename) {
     AAsset* asset = AAssetManager_open(assetManager, filename, AASSET_MODE_BUFFER);
-    if (!asset) return nullptr;
+    if (!asset) {
+        LOGE("Could not open file: %s", filename);
+        return nullptr;
+    }
     off_t length = AAsset_getLength(asset);
     char* buffer = (char*)malloc(length + 1);
     AAsset_read(asset, buffer, length);
@@ -76,6 +80,7 @@ GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), te
 GrassRenderer::~GrassRenderer() {}
 
 void GrassRenderer::setupShaders(AAssetManager* assetManager) {
+    // FIXED: Added "shaders/" prefix to match directory structure
     char* vsSrc = loadShaderFile(assetManager, "shaders/terrain.vert");
     char* fsSrc = loadShaderFile(assetManager, "shaders/terrain.frag");
     if (vsSrc && fsSrc) {
@@ -145,13 +150,13 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height,
     if (terrainVAO == 0) { generateTerrainGrid(); setupShaders(assetManager); }
 
     // PHYSICS UPDATE
-    float ground = getTerrainHeight(playerCharacter.getX(), playerCharacter.getZ());
-    playerCharacter.update(dt, moveX, moveY, camYaw, ground);
+    // Passing dummy height; Character now probes terrain height internally for accuracy
+    playerCharacter.update(dt, moveX, moveY, camYaw, 0.0f);
 
-    // CAMERA SYNC
+    // CAMERA SYNC: Lock camera to character position
     cameraX = playerCharacter.getX();
     cameraZ = playerCharacter.getZ();
-    cameraY = playerCharacter.getY() + 1.8f; 
+    cameraY = playerCharacter.getY() + 1.8f; // Head eye-level
 
     render(width, height);
 }
