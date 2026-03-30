@@ -10,9 +10,13 @@
 static float gTime = 0.0f;
 static GLuint emptyVAO = 0;
 
-// Shared Height Math - Smooth rolling hills
+// THE SOURCE OF TRUTH: This exact math is duplicated in all shaders
+// Using specific float literals (0.04f) to ensure CPU/GPU parity
 float getTerrainHeight(float x, float z) {
-    return sin(x * 0.05f) * 3.0f + cos(z * 0.07f) * 2.5f + sin((x+z) * 0.1f) * 1.5f;
+    float h = sin(x * 0.04f) * 4.0f;
+    h += cos(z * 0.03f) * 3.0f;
+    h += sin((x + z) * 0.1f) * 1.5f;
+    return h;
 }
 
 // ============================================================================
@@ -51,7 +55,7 @@ void multiplyMatrix(float* out, const float* a, const float* b) {
 }
 
 // ============================================================================
-// GLSL SHADERS
+// GLSL SHADERS (With Procedural Texturing)
 // ============================================================================
 const char* terrainVS = R"(#version 310 es
 layout(location = 0) in vec3 aPos;
@@ -59,17 +63,27 @@ uniform mat4 u_MVP;
 uniform vec3 u_CameraPos;
 out vec3 vWorldPos;
 out float vDist;
+out vec3 vNormal;
 
 float getHeight(vec2 p) { 
-    return sin(p.x * 0.05) * 3.0 + cos(p.y * 0.07) * 2.5 + sin((p.x+p.y) * 0.1) * 1.5; 
+    return sin(p.x * 0.04) * 4.0 + cos(p.y * 0.03) * 3.0 + sin((p.x + p.y) * 0.1) * 1.5; 
 }
 
 void main() {
+    // Snap-grid treadmill to prevent vertex jitter
+    float res = 1.0; 
     vec3 pos = aPos;
-    // SMOOTH TREADMILL: Offset the grid based on camera, but keep it centered
-    pos.x += u_CameraPos.x;
-    pos.z += u_CameraPos.z;
+    pos.x += floor(u_CameraPos.x / res) * res;
+    pos.z += floor(u_CameraPos.z / res) * res;
     pos.y = getHeight(pos.xz);
+
+    // Calculate normal for lighting/texturing
+    float delta = 0.1;
+    float hL = getHeight(pos.xz + vec2(-delta, 0.0));
+    float hR = getHeight(pos.xz + vec2(delta, 0.0));
+    float hD = getHeight(pos.xz + vec2(0.0, -delta));
+    float hU = getHeight(pos.xz + vec2(0.0, delta));
+    vNormal = normalize(vec3(hL - hR, 2.0 * delta, hD - hU));
 
     vWorldPos = pos;
     vDist = distance(pos, u_CameraPos);
@@ -81,23 +95,36 @@ const char* terrainFS = R"(#version 310 es
 precision mediump float;
 in vec3 vWorldPos;
 in float vDist;
+in vec3 vNormal;
 out vec4 FragColor;
 
-void main() {
-    // Ground detail
-    float grid = mod(floor(vWorldPos.x * 0.5) + floor(vWorldPos.z * 0.5), 2.0);
-    vec3 color1 = vec3(0.12, 0.15, 0.1); // Grassy soil
-    vec3 color2 = vec3(0.1, 0.12, 0.08); 
-    vec3 terrainColor = mix(color1, color2, grid);
-    
-    // REALISTIC HORIZON: Distance-based atmospheric fog
-    // We use a linear-to-exponential falloff to hide the mesh edges perfectly
-    float maxDist = 120.0; 
-    float fogFactor = clamp((maxDist - vDist) / (maxDist * 0.5), 0.0, 1.0);
-    fogFactor = pow(fogFactor, 1.5); // Soften the transition
+float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float noise(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p);
+    f = f*f*(3.0-2.0*f);
+    return mix(mix(hash(i), hash(i+vec2(1.0,0.0)), f.x),
+               mix(hash(i+vec2(0.0,1.0)), hash(i+vec2(1.0,1.0)), f.x), f.y);
+}
 
-    vec3 skyColor = vec3(0.6, 0.75, 0.9);
-    FragColor = vec4(mix(skyColor, terrainColor, fogFactor), 1.0);
+void main() {
+    // Procedural Layered Noise (FBM)
+    float n = noise(vWorldPos.xz * 0.5) * 0.5;
+    n += noise(vWorldPos.xz * 2.0) * 0.25;
+    n += noise(vWorldPos.xz * 8.0) * 0.125;
+
+    // Slope-based texturing (Rock on steep parts, moss on flat)
+    float slope = 1.0 - vNormal.y;
+    vec3 dirt = vec3(0.15, 0.1, 0.08);
+    vec3 rock = vec3(0.2, 0.2, 0.22);
+    vec3 moss = vec3(0.08, 0.12, 0.05);
+
+    vec3 baseColor = mix(moss, dirt, n);
+    baseColor = mix(baseColor, rock, smoothstep(0.3, 0.7, slope));
+
+    // Fog blending
+    float fog = clamp((120.0 - vDist) / 60.0, 0.0, 1.0);
+    vec3 sky = vec3(0.55, 0.7, 0.85);
+    FragColor = vec4(mix(sky, baseColor * (0.8 + n * 0.4), fog), 1.0);
 }
 )";
 
@@ -111,36 +138,37 @@ uniform float u_Time;
 
 float rand(vec2 co){ return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453); }
 float getHeight(vec2 p) { 
-    return sin(p.x * 0.05) * 3.0 + cos(p.y * 0.07) * 2.5 + sin((p.x+p.y) * 0.1) * 1.5; 
+    return sin(p.x * 0.04) * 4.0 + cos(p.y * 0.03) * 3.0 + sin((p.x + p.y) * 0.1) * 1.5; 
 }
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
-    float gridSize = 80.0; // Larger grass field
+    float gridSize = 60.0;
     int gridSide = 256;
     
-    float xIdx = float(i % uint(gridSide));
-    float zIdx = float(i / uint(gridSide));
+    float xIdx = float(i % 256u);
+    float zIdx = float(i / 256u);
 
-    float localX = (xIdx / float(gridSide)) * gridSize - (gridSize * 0.5);
-    float localZ = (zIdx / float(gridSide)) * gridSize - (gridSize * 0.5);
+    // Dynamic placement that follows the camera smoothly
+    float localX = (xIdx / 256.0) * gridSize - (gridSize * 0.5);
+    float localZ = (zIdx / 256.0) * gridSize - (gridSize * 0.5);
 
-    // Continuous world positioning
     float worldX = u_CameraPos.x + localX;
     float worldZ = u_CameraPos.z + localZ;
 
-    // Small jitter to break the grid pattern
-    worldX += rand(vec2(xIdx, zIdx)) * 0.5;
-    worldZ += rand(vec2(zIdx, xIdx)) * 0.5;
+    // Add randomized offset per blade
+    float seed = rand(vec2(xIdx, zIdx));
+    worldX += (seed - 0.5) * 0.5;
+    worldZ += (rand(vec2(zIdx, xIdx)) - 0.5) * 0.5;
 
-    float wind = sin(u_Time * 1.2 + worldX * 0.3) * cos(u_Time * 0.8 + worldZ * 0.2);
+    float wind = sin(u_Time * 1.5 + worldX * 0.2 + worldZ * 0.1) * 0.4;
     
+    // CRITICAL: Grounding height must match Terrain exactly
     blades[i].pos = vec4(worldX, getHeight(vec2(worldX, worldZ)), worldZ, 1.0);
-    blades[i].dir = vec4(wind * 0.3, 1.0, wind * 0.2, 0.0);
+    blades[i].dir = vec4(wind, 1.0 + seed * 0.5, wind * 0.5, 0.0);
 }
 )";
 
-// Vertex and Fragment shaders for grass remain similar but with improved fog
 const char* grassVS = R"(#version 310 es
 struct Blade { vec4 pos; vec4 dir; };
 layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
@@ -153,19 +181,16 @@ void main() {
     Blade b = blades[gl_InstanceID];
     vDist = distance(b.pos.xyz, u_CameraPos);
     
-    if (vDist > 60.0) { // Clip distant grass
-        gl_Position = vec4(0.0);
-        return;
-    }
+    if (vDist > 40.0) { gl_Position = vec4(0.0); return; }
 
     vec3 toCam = normalize(u_CameraPos - b.pos.xyz);
     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam));
     
-    float h = 0.5 + (sin(b.pos.x * 10.0) * 0.2); // Random heights
+    float h = 0.4 * b.dir.y;
     vec3 pos = b.pos.xyz;
-    if (gl_VertexID == 0) { pos -= right * 0.03; v_Height = 0.0; }
-    else if (gl_VertexID == 1) { pos += right * 0.03; v_Height = 0.0; }
-    else { pos += b.dir.xyz * h; v_Height = 1.0; }
+    if (gl_VertexID == 0) { pos -= right * 0.025; v_Height = 0.0; }
+    else if (gl_VertexID == 1) { pos += right * 0.025; v_Height = 0.0; }
+    else { pos += b.dir.xzy * h; v_Height = 1.0; } // Note: wind in dir.xz
 
     gl_Position = u_MVP * vec4(pos, 1.0);
 }
@@ -177,10 +202,9 @@ in float v_Height;
 in float vDist;
 out vec4 FragColor;
 void main() {
-    vec3 col = mix(vec3(0.05, 0.15, 0.05), vec3(0.4, 0.7, 0.2), v_Height);
-    float maxGDist = 60.0;
-    float fog = clamp((maxGDist - vDist) / 20.0, 0.0, 1.0);
-    vec3 sky = vec3(0.6, 0.75, 0.9);
+    vec3 col = mix(vec3(0.04, 0.1, 0.04), vec3(0.3, 0.6, 0.15), v_Height);
+    float fog = clamp((40.0 - vDist) / 15.0, 0.0, 1.0);
+    vec3 sky = vec3(0.55, 0.7, 0.85);
     FragColor = vec4(mix(sky, col, fog), 1.0);
 }
 )";
@@ -229,8 +253,8 @@ void GrassRenderer::setupShaders() {
 void GrassRenderer::generateTerrainGrid() {
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
-    int res = 128; // Higher resolution grid for smoother hills
-    float size = 300.0f; // Large grid to ensure mesh always covers the fog distance
+    int res = 160; 
+    float size = 320.0f;
 
     for(int z = 0; z < res; z++) {
         for(int x = 0; x < res; x++) {
@@ -258,7 +282,7 @@ void GrassRenderer::generateTerrainGrid() {
 
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
     moveX = mx; moveY = my; 
-    camYaw += lx * 0.005f; camPitch += ly * 0.005f;
+    camYaw += lx * 0.004f; camPitch += ly * 0.004f;
     if (camPitch > 1.2f) camPitch = 1.2f;
     if (camPitch < -1.2f) camPitch = -1.2f;
 }
@@ -268,16 +292,19 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     gTime = time;
     if (terrainVAO == 0) { generateTerrainGrid(); setupShaders(); }
 
-    cameraX += (moveX * cos(camYaw) + moveY * sin(camYaw)) * dt * 10.0f;
-    cameraZ += (-moveY * cos(camYaw) + moveX * sin(camYaw)) * dt * 10.0f; 
-    cameraY = getTerrainHeight(cameraX, cameraZ) + 1.8f;
+    // Physical Movement
+    cameraX += (moveX * cos(camYaw) + moveY * sin(camYaw)) * dt * 9.0f;
+    cameraZ += (-moveY * cos(camYaw) + moveX * sin(camYaw)) * dt * 9.0f; 
+    
+    // CPU height must match GPU height exactly
+    cameraY = getTerrainHeight(cameraX, cameraZ) + 1.75f;
 
     render(width, height);
 }
 
 void GrassRenderer::render(int width, int height) {
     glViewport(0, 0, width, height);
-    glClearColor(0.6f, 0.75f, 0.9f, 1.0f); // Match the sky exactly
+    glClearColor(0.55f, 0.7f, 0.85f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
