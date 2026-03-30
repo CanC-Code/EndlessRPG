@@ -3,14 +3,14 @@
 
 #include <GLES3/gl31.h>
 #include <android/asset_manager.h>
-#include "Character.h" // CRITICAL: Header must be included to use Character class
+#include "Character.h" // Ensures the Renderer knows what a 'Character' is
 
 class GrassRenderer {
 public:
     GrassRenderer();
     ~GrassRenderer();
 
-    // Updated to accept AssetManager for loading external shader files
+    // Updated to accept the AssetManager for loading files from /assets/shaders
     void updateAndRender(float time, float dt, int width, int height, AAssetManager* assetManager);
     
     void updateInput(float mx, float my, float lx, float ly, bool tp, float zoom);
@@ -20,22 +20,23 @@ private:
     void setupShaders(AAssetManager* assetManager);
     void generateTerrainGrid();
     
-    // Helper to read GLSL code from the assets/shaders folder
+    // Helper to read shader source from the Android assets
     char* loadShaderFile(AAssetManager* assetManager, const char* filename);
 
     // ========================================================================
-    // THE FIX: The Renderer now officially owns the Character physics body.
-    // This allows the engine to track the player's world position and height.
+    // THE FIX: This declaration allows the Renderer to track the player
+    // consistently across every frame. Without this, playerCharacter 
+    // is an "undeclared identifier" and the build fails.
     // ========================================================================
     Character playerCharacter; 
 
-    // OpenGL Handle State
+    // OpenGL State Handles
     GLuint terrainVAO, terrainVBO, terrainEBO;
     GLuint terrainProgram, grassProgram, grassComputeProgram;
     GLuint grassSSBO;
     int indexCount;
 
-    // Camera and Viewing State
+    // Camera/View State
     float cameraX, cameraY, cameraZ;
     float camYaw, camPitch;
     float moveX, moveY;
