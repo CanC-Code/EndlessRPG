@@ -1,37 +1,45 @@
 #version 310 es
+
 layout(location = 0) in vec3 aPosition;
+layout(location = 1) in vec2 aTexCoord;
+layout(location = 2) in vec3 aNormal;
 
-uniform mat4 u_MVP;
-uniform vec3 u_CameraPos;
-
-out vec3 vWorldPos;
+out vec2 vTexCoord;
 out vec3 vNormal;
+out vec3 vFragPos;
 
-float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
-float noise(vec2 p) {
-    vec2 i = floor(p); vec2 f = fract(p);
-    vec2 u = f*f*(3.0-2.0*f);
-    return mix(mix(hash(i+vec2(0,0)), hash(i+vec2(1,0)), u.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), u.x), u.y);
-}
+uniform mat4 uModel;
+uniform mat4 uView;
+uniform mat4 uProjection;
 
-float getH(vec2 p) {
-    return noise(p * 0.05) * 15.0 + noise(p * 0.1) * 5.0;
+// Terrain generation parameters (Must match Character.cpp!)
+const float TERRAIN_AMPLITUDE = 2.5;
+const float TERRAIN_FREQUENCY = 0.2;
+
+float getTerrainHeight(float x, float z) {
+    // A standard procedural height calculation
+    return TERRAIN_AMPLITUDE * sin(x * TERRAIN_FREQUENCY) * cos(z * TERRAIN_FREQUENCY);
 }
 
 void main() {
-    vec3 worldPos = aPosition;
+    vTexCoord = aTexCoord;
     
-    // Snap to the 1.0 unit C++ grid to prevent crawling
-    vec2 snapped = floor(u_CameraPos.xz / 1.0) * 1.0; 
-    worldPos.xz += snapped;
-    worldPos.y = getH(worldPos.xz);
-
-    // Analytical Normals for realistic lighting
-    float e = 0.1;
-    float hX = getH(worldPos.xz + vec2(e, 0.0));
-    float hZ = getH(worldPos.xz + vec2(0.0, e));
-    vNormal = normalize(vec3(worldPos.y - hX, e, worldPos.y - hZ));
-
-    vWorldPos = worldPos;
-    gl_Position = u_MVP * vec4(worldPos, 1.0);
+    // Calculate world position
+    vec4 worldPos = uModel * vec4(aPosition, 1.0);
+    
+    // LOGIC FIX: Apply the procedural height to the world position Y
+    worldPos.y = getTerrainHeight(worldPos.x, worldPos.z);
+    
+    vFragPos = vec3(worldPos);
+    
+    // Recalculate basic normals based on the derivative of the height function
+    // (Optional but highly recommended for accurate lighting on procedurally altered terrain)
+    float dx = TERRAIN_AMPLITUDE * TERRAIN_FREQUENCY * cos(worldPos.x * TERRAIN_FREQUENCY) * cos(worldPos.z * TERRAIN_FREQUENCY);
+    float dz = -TERRAIN_AMPLITUDE * TERRAIN_FREQUENCY * sin(worldPos.x * TERRAIN_FREQUENCY) * sin(worldPos.z * TERRAIN_FREQUENCY);
+    vec3 calculatedNormal = normalize(vec3(-dx, 1.0, -dz));
+    
+    // Apply normal matrix 
+    vNormal = mat3(transpose(inverse(uModel))) * calculatedNormal;
+    
+    gl_Position = uProjection * uView * worldPos;
 }
