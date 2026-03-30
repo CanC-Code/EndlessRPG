@@ -1,31 +1,31 @@
-#pragma once
-#include <GLES3/gl31.h>
-#include <cmath>
-#include <algorithm>
+#ifndef CHARACTER_H
+#define CHARACTER_H
+
+#include <glm/glm.hpp> // Ensure GLM is in your project for vector math
 
 class Character {
 public:
     Character();
+    ~Character();
+
     void init();
-    // Upgraded signature to accept terrain slope angles (Pitch and Roll)
-    void render(const float* vp, float x, float y, float z, float yaw, float pitch, float roll, float cameraX, float cameraZ);
+    
+    // Core Physics Update
+    void update(float dt, float moveX, float moveY, float yaw, float groundHeight);
+    
+    // Getters for the Renderer
+    float getX() const { return position.x; }
+    float getY() const { return position.y; }
+    float getZ() const { return position.z; }
 
 private:
-    GLuint vao, vbo, program;
-    float lastX, lastY, lastZ;
-    float walkPhase;
-    float swingAmplitude;
-    float leanAngle;
-    float bankAngle;
-
-    void makeIdentity(float* m);
-    void matMul(float* out, const float* a, const float* b);
-    void copyMat(float* dst, const float* src);
-    void translateLocal(float* m, float x, float y, float z);
-    void rotateXLocal(float* m, float angleRad);
-    void rotateYLocal(float* m, float angleRad);
-    void rotateZLocal(float* m, float angleRad);
-    void scaleLocal(float* m, float x, float y, float z);
-
-    void drawAnatomicalSegment(const float* vp, const float* model, float rStart, float rEnd, float colorR, float colorG, float colorB, float camX, float camZ);
+    glm::vec3 position;
+    glm::vec3 velocity;
+    
+    float eyeHeight = 1.8f;   // Player height
+    float gravity = -15.0f;   // Stronger gravity for "heavy" feel
+    float moveSpeed = 8.0f;
+    bool isGrounded = false;
 };
+
+#endif
