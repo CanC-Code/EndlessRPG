@@ -13,20 +13,19 @@ private:
     Vector3 position;
     Vector3 velocity;
     
-    // NEW: We must declare the speed variable here so the .cpp file can use it
     float speed;
 
-    // NEW: Declare the terrain height calculation function as a private helper
+    // Helper function for procedural terrain height
     float getTerrainHeight(float x, float z);
 
 public:
     Character();
     ~Character();
 
-    // NEW: Declare our updated movement function
-    void update(float deltaTime, float joystickX, float joystickY);
+    // FIXED: Now expects 5 parameters to match Renderer.cpp
+    void update(float deltaTime, float joystickX, float joystickY, float camYaw, float camPitch);
 
-    // Getters for position (Declared here, implemented in the .cpp file)
+    // Getters
     float getX() const;
     float getY() const;
     float getZ() const;
