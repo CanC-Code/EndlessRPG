@@ -10,9 +10,9 @@
 static float gTime = 0.0f;
 static GLuint emptyVAO = 0;
 
-// Shared Height Math: CPU and GPU must agree on where the ground is!
+// Shared Height Math - Smooth rolling hills
 float getTerrainHeight(float x, float z) {
-    return sin(x * 0.1f) * 2.0f + cos(z * 0.1f) * 2.0f;
+    return sin(x * 0.05f) * 3.0f + cos(z * 0.07f) * 2.5f + sin((x+z) * 0.1f) * 1.5f;
 }
 
 // ============================================================================
@@ -51,7 +51,7 @@ void multiplyMatrix(float* out, const float* a, const float* b) {
 }
 
 // ============================================================================
-// GLSL SHADERS (With Fog and Hills)
+// GLSL SHADERS
 // ============================================================================
 const char* terrainVS = R"(#version 310 es
 layout(location = 0) in vec3 aPos;
@@ -60,14 +60,16 @@ uniform vec3 u_CameraPos;
 out vec3 vWorldPos;
 out float vDist;
 
-float getHeight(vec2 p) { return sin(p.x * 0.1) * 2.0 + cos(p.y * 0.1) * 2.0; }
+float getHeight(vec2 p) { 
+    return sin(p.x * 0.05) * 3.0 + cos(p.y * 0.07) * 2.5 + sin((p.x+p.y) * 0.1) * 1.5; 
+}
 
 void main() {
     vec3 pos = aPos;
-    // Infinite Treadmill: Snaps the grid to follow the camera!
-    pos.x += floor(u_CameraPos.x);
-    pos.z += floor(u_CameraPos.z);
-    pos.y = getHeight(pos.xz); // Apply rolling hills
+    // SMOOTH TREADMILL: Offset the grid based on camera, but keep it centered
+    pos.x += u_CameraPos.x;
+    pos.z += u_CameraPos.z;
+    pos.y = getHeight(pos.xz);
 
     vWorldPos = pos;
     vDist = distance(pos, u_CameraPos);
@@ -82,15 +84,19 @@ in float vDist;
 out vec4 FragColor;
 
 void main() {
-    float grid = mod(floor(vWorldPos.x) + floor(vWorldPos.z), 2.0);
-    vec3 color1 = vec3(0.18, 0.12, 0.08); 
-    vec3 color2 = vec3(0.15, 0.10, 0.06); 
+    // Ground detail
+    float grid = mod(floor(vWorldPos.x * 0.5) + floor(vWorldPos.z * 0.5), 2.0);
+    vec3 color1 = vec3(0.12, 0.15, 0.1); // Grassy soil
+    vec3 color2 = vec3(0.1, 0.12, 0.08); 
     vec3 terrainColor = mix(color1, color2, grid);
     
-    // Distance Fog to blend into horizon
-    float fogFactor = exp(-pow(vDist * 0.025, 2.0));
-    vec3 skyColor = vec3(0.5, 0.7, 0.9);
-    
+    // REALISTIC HORIZON: Distance-based atmospheric fog
+    // We use a linear-to-exponential falloff to hide the mesh edges perfectly
+    float maxDist = 120.0; 
+    float fogFactor = clamp((maxDist - vDist) / (maxDist * 0.5), 0.0, 1.0);
+    fogFactor = pow(fogFactor, 1.5); // Soften the transition
+
+    vec3 skyColor = vec3(0.6, 0.75, 0.9);
     FragColor = vec4(mix(skyColor, terrainColor, fogFactor), 1.0);
 }
 )";
@@ -103,38 +109,41 @@ layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
 uniform vec3 u_CameraPos;
 uniform float u_Time;
 
-float rand(vec2 co){ return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); }
-float getHeight(vec2 p) { return sin(p.x * 0.1) * 2.0 + cos(p.y * 0.1) * 2.0; }
+float rand(vec2 co){ return fract(sin(dot(co.xy, vec2(12.9898,78.233))) * 43758.5453); }
+float getHeight(vec2 p) { 
+    return sin(p.x * 0.05) * 3.0 + cos(p.y * 0.07) * 2.5 + sin((p.x+p.y) * 0.1) * 1.5; 
+}
 
 void main() {
     uint i = gl_GlobalInvocationID.x;
-    float gridSize = 60.0; // 60m radius of grass
-    int gridX = int(i % 256u);
-    int gridZ = int(i / 256u);
-
-    float localX = (float(gridX) / 256.0) * gridSize - (gridSize / 2.0);
-    float localZ = (float(gridZ) / 256.0) * gridSize - (gridSize / 2.0);
-    float spacing = gridSize / 256.0;
+    float gridSize = 80.0; // Larger grass field
+    int gridSide = 256;
     
-    float snappedCamX = floor(u_CameraPos.x / spacing) * spacing;
-    float snappedCamZ = floor(u_CameraPos.z / spacing) * spacing;
+    float xIdx = float(i % uint(gridSide));
+    float zIdx = float(i / uint(gridSide));
 
-    float worldX = snappedCamX + localX + (rand(vec2(gridX, gridZ)) - 0.5) * spacing * 0.9;
-    float worldZ = snappedCamZ + localZ + (rand(vec2(gridZ, gridX)) - 0.5) * spacing * 0.9;
+    float localX = (xIdx / float(gridSide)) * gridSize - (gridSize * 0.5);
+    float localZ = (zIdx / float(gridSide)) * gridSize - (gridSize * 0.5);
 
-    float windX = sin(u_Time * 1.5 + worldX * 0.2 + worldZ * 0.1) * 0.4;
-    float windZ = cos(u_Time * 1.2 + worldZ * 0.2 - worldX * 0.1) * 0.4;
+    // Continuous world positioning
+    float worldX = u_CameraPos.x + localX;
+    float worldZ = u_CameraPos.z + localZ;
 
-    // Apply exact same height math to grass roots!
+    // Small jitter to break the grid pattern
+    worldX += rand(vec2(xIdx, zIdx)) * 0.5;
+    worldZ += rand(vec2(zIdx, xIdx)) * 0.5;
+
+    float wind = sin(u_Time * 1.2 + worldX * 0.3) * cos(u_Time * 0.8 + worldZ * 0.2);
+    
     blades[i].pos = vec4(worldX, getHeight(vec2(worldX, worldZ)), worldZ, 1.0);
-    blades[i].dir = vec4(windX, 1.0, windZ, 0.0);
+    blades[i].dir = vec4(wind * 0.3, 1.0, wind * 0.2, 0.0);
 }
 )";
 
+// Vertex and Fragment shaders for grass remain similar but with improved fog
 const char* grassVS = R"(#version 310 es
 struct Blade { vec4 pos; vec4 dir; };
 layout(std430, binding = 0) buffer GrassBuffer { Blade blades[]; };
-
 uniform mat4 u_MVP;
 uniform vec3 u_CameraPos;
 out float v_Height;
@@ -142,24 +151,21 @@ out float vDist;
 
 void main() {
     Blade b = blades[gl_InstanceID];
-    vec3 basePos = b.pos.xyz;
-    vDist = distance(basePos, u_CameraPos);
-
-    if (vDist > 30.0) { // Cull grass far away to save GPU
+    vDist = distance(b.pos.xyz, u_CameraPos);
+    
+    if (vDist > 60.0) { // Clip distant grass
         gl_Position = vec4(0.0);
         return;
     }
 
-    vec3 toCam = normalize(u_CameraPos - basePos);
+    vec3 toCam = normalize(u_CameraPos - b.pos.xyz);
     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), toCam));
-
-    float width = 0.04;
-    float height = 0.65;
-    vec3 pos = basePos;
     
-    if (gl_VertexID == 0) { pos -= right * width; v_Height = 0.0; } 
-    else if (gl_VertexID == 1) { pos += right * width; v_Height = 0.0; } 
-    else if (gl_VertexID == 2) { pos += b.dir.xyz * height; v_Height = 1.0; }
+    float h = 0.5 + (sin(b.pos.x * 10.0) * 0.2); // Random heights
+    vec3 pos = b.pos.xyz;
+    if (gl_VertexID == 0) { pos -= right * 0.03; v_Height = 0.0; }
+    else if (gl_VertexID == 1) { pos += right * 0.03; v_Height = 0.0; }
+    else { pos += b.dir.xyz * h; v_Height = 1.0; }
 
     gl_Position = u_MVP * vec4(pos, 1.0);
 }
@@ -170,17 +176,12 @@ precision mediump float;
 in float v_Height;
 in float vDist;
 out vec4 FragColor;
-
 void main() {
-    vec3 rootColor = vec3(0.05, 0.25, 0.05);
-    vec3 tipColor = vec3(0.4, 0.8, 0.2);
-    vec3 grassColor = mix(rootColor, tipColor, v_Height);
-    
-    // Fade grass out into the fog smoothly
-    float fogFactor = exp(-pow(vDist * 0.025, 2.0));
-    vec3 skyColor = vec3(0.5, 0.7, 0.9);
-    
-    FragColor = vec4(mix(skyColor, grassColor, fogFactor), 1.0);
+    vec3 col = mix(vec3(0.05, 0.15, 0.05), vec3(0.4, 0.7, 0.2), v_Height);
+    float maxGDist = 60.0;
+    float fog = clamp((maxGDist - vDist) / 20.0, 0.0, 1.0);
+    vec3 sky = vec3(0.6, 0.75, 0.9);
+    FragColor = vec4(mix(sky, col, fog), 1.0);
 }
 )";
 
@@ -189,7 +190,7 @@ void main() {
 // ============================================================================
 GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), indexCount(0) {
     cameraX = 0.0f; cameraZ = 0.0f;
-    cameraY = getTerrainHeight(cameraX, cameraZ) + 1.8f; 
+    cameraY = 1.8f; 
     camYaw = 0.0f; camPitch = 0.0f; 
 }
 
@@ -228,19 +229,20 @@ void GrassRenderer::setupShaders() {
 void GrassRenderer::generateTerrainGrid() {
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
-    int gridW = 80; int gridD = 80;
+    int res = 128; // Higher resolution grid for smoother hills
+    float size = 300.0f; // Large grid to ensure mesh always covers the fog distance
 
-    for(int z = 0; z < gridD; z++) {
-        for(int x = 0; x < gridW; x++) {
-            vertices.push_back(x - gridW / 2.0f);
+    for(int z = 0; z < res; z++) {
+        for(int x = 0; x < res; x++) {
+            vertices.push_back((x / (float)res) * size - size*0.5f);
             vertices.push_back(0.0f); 
-            vertices.push_back(z - gridD / 2.0f);
+            vertices.push_back((z / (float)res) * size - size*0.5f);
         }
     }
-    for(int z = 0; z < gridD - 1; z++) {
-        for(int x = 0; x < gridW - 1; x++) {
-            int tl = (z * gridW) + x; int tr = tl + 1;
-            int bl = ((z + 1) * gridW) + x; int br = bl + 1;
+    for(int z = 0; z < res - 1; z++) {
+        for(int x = 0; x < res - 1; x++) {
+            int tl = (z * res) + x; int tr = tl + 1;
+            int bl = ((z + 1) * res) + x; int br = bl + 1;
             indices.insert(indices.end(), { (unsigned int)tl, (unsigned int)bl, (unsigned int)tr, (unsigned int)tr, (unsigned int)bl, (unsigned int)br });
         }
     }
@@ -257,8 +259,8 @@ void GrassRenderer::generateTerrainGrid() {
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
     moveX = mx; moveY = my; 
     camYaw += lx * 0.005f; camPitch += ly * 0.005f;
-    if (camPitch > 1.5f) camPitch = 1.5f;
-    if (camPitch < -1.5f) camPitch = -1.5f;
+    if (camPitch > 1.2f) camPitch = 1.2f;
+    if (camPitch < -1.2f) camPitch = -1.2f;
 }
 
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height) {
@@ -266,11 +268,8 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
     gTime = time;
     if (terrainVAO == 0) { generateTerrainGrid(); setupShaders(); }
 
-    // Apply movement based on camera orientation
-    cameraX += (moveX * cos(camYaw) + moveY * sin(camYaw)) * dt * 8.0f;
-    cameraZ += (-moveY * cos(camYaw) + moveX * sin(camYaw)) * dt * 8.0f; 
-    
-    // Snap camera height to terrain! (+1.8m for eye height)
+    cameraX += (moveX * cos(camYaw) + moveY * sin(camYaw)) * dt * 10.0f;
+    cameraZ += (-moveY * cos(camYaw) + moveX * sin(camYaw)) * dt * 10.0f; 
     cameraY = getTerrainHeight(cameraX, cameraZ) + 1.8f;
 
     render(width, height);
@@ -278,18 +277,16 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height)
 
 void GrassRenderer::render(int width, int height) {
     glViewport(0, 0, width, height);
-    glClearColor(0.5f, 0.7f, 0.9f, 1.0f); // Match the fog skyColor
+    glClearColor(0.6f, 0.75f, 0.9f, 1.0f); // Match the sky exactly
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE); 
-
-    float camFWDX = sin(camYaw) * cos(camPitch);
-    float camFWDY = -sin(camPitch);
-    float camFWDZ = -cos(camYaw) * cos(camPitch);
 
     float proj[16], view[16], mvp[16];
     perspective(proj, 60.0f * (M_PI / 180.0f), (float)width / (float)height, 0.1f, 1000.0f);
-    lookAt(view, cameraX, cameraY, cameraZ, cameraX + camFWDX, cameraY + camFWDY, cameraZ + camFWDZ, 0.0f, 1.0f, 0.0f);
+    float targetX = cameraX + sin(camYaw) * cos(camPitch);
+    float targetY = cameraY - sin(camPitch);
+    float targetZ = cameraZ - cos(camYaw) * cos(camPitch);
+    lookAt(view, cameraX, cameraY, cameraZ, targetX, targetY, targetZ, 0.0f, 1.0f, 0.0f);
     multiplyMatrix(mvp, proj, view);
 
     glUseProgram(grassComputeProgram);
