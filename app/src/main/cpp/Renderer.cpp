@@ -79,6 +79,10 @@ GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), te
 
 GrassRenderer::~GrassRenderer() {}
 
+void GrassRenderer::initGrassSim() {
+    grassSim = std::make_unique<GrassSim>(0xC0FFEEULL, 64, 64, 4.0f);
+}
+
 void GrassRenderer::setupShaders(AAssetManager* assetManager) {
     // FIXED: Added "shaders/" prefix to match directory structure
     char* vsSrc = loadShaderFile(assetManager, "shaders/terrain.vert");
@@ -157,6 +161,9 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height,
     cameraX = playerCharacter.getX();
     cameraZ = playerCharacter.getZ();
     cameraY = playerCharacter.getY() + 1.8f; // Head eye-level
+
+    if (!grassSim) initGrassSim();
+    grassSim->tick(dt, cameraX, cameraZ, 25.0f);
 
     render(width, height);
 }

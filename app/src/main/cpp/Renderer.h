@@ -2,6 +2,8 @@
 #define RENDERER_H
 
 #include <GLES3/gl31.h>
+#include <memory>
+#include "GrassSim.h"
 #include <android/asset_manager.h>
 #include "Character.h" // ADDED: Required for playerCharacter member
 
@@ -15,6 +17,7 @@ public:
 
 private:
     void render(int width, int height);
+    void initGrassSim();
     void setupShaders(AAssetManager* assetManager);
     void generateTerrainGrid();
     char* loadShaderFile(AAssetManager* assetManager, const char* filename);
@@ -32,6 +35,8 @@ private:
     float cameraX, cameraY, cameraZ;
     float camYaw, camPitch;
     float moveX, moveY;
+
+    std::unique_ptr<GrassSim> grassSim;
 };
 
 #endif
