@@ -195,8 +195,21 @@ void GrassRenderer::render(int width, int height) {
         glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), cameraX, cameraY, cameraZ);
         glBindVertexArray(terrainVAO);
         LOGE("terrain: prog=%u idx=%d", terrainProgram, indexCount);
+        LOGE("cam %.2f %.2f %.2f yaw %.2f", cameraX, cameraY, cameraZ, camYaw);
+        LOGE("cam %.2f %.2f %.2f yaw %.2f pitch %.2f", cameraX, cameraY, cameraZ, camYaw, camPitch);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
     }
+    { float ident[16]; for(int i=0;i<16;i++) ident[i] = (i%5==0)?1.0f:0.0f;
+      GLuint dv=0, db=0; static int inited=0;
+      static GLuint sv=0, sb=0;
+      if(!inited){ float tri[9]={-0.8f,-0.8f,0.0f, 0.8f,-0.8f,0.0f, 0.0f,0.8f,0.0f};
+        glGenVertexArrays(1,&sv); glGenBuffers(1,&sb); glBindVertexArray(sv);
+        glBindBuffer(GL_ARRAY_BUFFER,sb); glBufferData(GL_ARRAY_BUFFER,sizeof(tri),tri,GL_STATIC_DRAW);
+        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),0); glEnableVertexAttribArray(0);
+        inited=1; }
+      if(terrainProgram){ glUseProgram(terrainProgram);
+        glUniformMatrix4fv(glGetUniformLocation(terrainProgram,"uMVP"),1,GL_FALSE,ident);
+        glBindVertexArray(sv); glDisable(GL_DEPTH_TEST); glDrawArrays(GL_TRIANGLES,0,3); glEnable(GL_DEPTH_TEST); } }
     if (grassProgram) {
         glUseProgram(grassProgram);
         glUniformMatrix4fv(glGetUniformLocation(grassProgram, "u_MVP"), 1, GL_FALSE, mvp);
