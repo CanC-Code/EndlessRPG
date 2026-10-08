@@ -5,6 +5,8 @@
 #include <memory>
 #include "GrassSim.h"
 #include <android/asset_manager.h>
+#include "BladeMeshBuilder.h"
+#include "BladePipeline.h"
 #include "Character.h" // ADDED: Required for playerCharacter member
 
 class GrassRenderer {
