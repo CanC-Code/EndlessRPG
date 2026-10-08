@@ -168,10 +168,6 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height,
 
     if (!grassSim) initGrassSim();
     grassSim->tick(dt, cameraX, cameraZ, 25.0f);
-    static bool once=false;
-    if(!once){once=true; std::vector<BladeVertex> sc(30000); CameraView cv{cameraX,cameraY,cameraZ};
-      int tr=build_frame_grass(grassSim->tiles(),cv,0.0f,sc.data(),(int)sc.size());
-      LOGE("BladeMeshBuilder: %d tris visible",tr);}
 
     render(width, height);
 }
