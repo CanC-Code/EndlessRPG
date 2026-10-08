@@ -191,7 +191,7 @@ void GrassRenderer::render(int width, int height) {
     }
     if (terrainProgram) {
         glUseProgram(terrainProgram);
-        glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_MVP"), 1, GL_FALSE, mvp);
+        glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uMVP"), 1, GL_FALSE, mvp);
         glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), cameraX, cameraY, cameraZ);
         glBindVertexArray(terrainVAO);
         LOGE("terrain: prog=%u idx=%d", terrainProgram, indexCount);
@@ -199,7 +199,7 @@ void GrassRenderer::render(int width, int height) {
     }
     if (grassProgram) {
         glUseProgram(grassProgram);
-        glUniformMatrix4fv(glGetUniformLocation(grassProgram, "u_MVP"), 1, GL_FALSE, mvp);
+        glUniformMatrix4fv(glGetUniformLocation(grassProgram, "uMVP"), 1, GL_FALSE, mvp);
         glUniform3f(glGetUniformLocation(grassProgram, "u_CameraPos"), cameraX, cameraY, cameraZ);
         glBindVertexArray(emptyVAO);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, grassSSBO);
