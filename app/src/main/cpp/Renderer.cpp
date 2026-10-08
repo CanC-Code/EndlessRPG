@@ -70,6 +70,7 @@ GLuint compileShaderFromSource(GLenum type, const char* source) {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
+    { GLint ok=0; glGetShaderiv(shader, GL_COMPILE_STATUS, &ok); if(!ok){char lg[1024]; GLsizei ln=0; glGetShaderInfoLog(shader,1024,&ln,lg); LOGE("SHADER FAIL: %s", lg);} }
     return shader;
 }
 
@@ -193,6 +194,7 @@ void GrassRenderer::render(int width, int height) {
         glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "u_MVP"), 1, GL_FALSE, mvp);
         glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), cameraX, cameraY, cameraZ);
         glBindVertexArray(terrainVAO);
+        LOGE("terrain: prog=%u idx=%d", terrainProgram, indexCount);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
     }
     if (grassProgram) {
