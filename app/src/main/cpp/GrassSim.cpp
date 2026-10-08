@@ -27,10 +27,6 @@ GrassSim::GrassSim(uint64_t worldSeed, int tilesX, int tilesZ, float tileSize)
     }
 }
 
-void GrassSim::populate_tile(GrassTile& t) {
-    // Skeleton — population logic lands in commit 3.
-    t.blades.clear();
-}
 
 void GrassSim::tick(float dt, float camX, float camZ, float activeRadius) {
     // Skeleton — simulation lands in commit 5.
@@ -39,4 +35,32 @@ void GrassSim::tick(float dt, float camX, float camZ, float activeRadius) {
 
 void GrassSim::tick_blade(Blade& b, float dt) {
     (void)b; (void)dt;
+}
+
+void GrassSim::populate_tile(GrassTile& t) {
+    uint64_t h = hash64(seed_, t.tileX, t.tileZ);
+    auto next_u32 = [&h]() -> uint32_t {
+        h ^= h << 13; h ^= h >> 7; h ^= h << 17;
+        return (uint32_t)(h >> 32);
+    };
+    auto next_float = [&next_u32]() -> float {
+        return (next_u32() & 0xFFFFFF) / (float)0x1000000;
+    };
+
+    const int count = 40;
+    t.blades.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        Blade b;
+        b.localX = (uint8_t)(next_u32() & 0xFF);
+        b.localZ = (uint8_t)(next_u32() & 0xFF);
+        b.seed   = (uint8_t)(next_u32() & 0xFF);
+        b.maxHeight  = 0.18f + next_float() * 0.37f;
+        b.width      = 0.008f + next_float() * 0.010f;
+        b.bend       = (next_float() - 0.5f) * 0.4f;
+        b.growthTime = 3.0f + next_float() * 5.0f;
+        b.age            = next_float() * 20.0f;
+        b.currentHeight  = 0.0f;
+        b.health         = 1.0f;
+        t.blades.push_back(b);
+    }
 }

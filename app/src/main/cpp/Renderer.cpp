@@ -81,7 +81,9 @@ GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), te
 GrassRenderer::~GrassRenderer() {}
 
 void GrassRenderer::initGrassSim() {
-    grassSim = std::make_unique<GrassSim>(0xC0FFEEULL, 64, 64, 4.0f);
+    grassSim = std::make_unique<GrassSim>(0xC0FFEEULL, 32, 32, 4.0f);
+    { size_t total = 0; for (const auto& t : grassSim->tiles()) total += t.blades.size();
+      LOGE("GrassSim: tiles=%zu blades=%zu", grassSim->tiles().size(), total); }
 }
 
 void GrassRenderer::setupShaders(AAssetManager* assetManager) {
