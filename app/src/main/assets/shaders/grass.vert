@@ -6,8 +6,8 @@ layout(location = 1) in vec3 aInstanceOffset;// The X/Z world position from the 
 
 out vec2 TexCoord;
 
-uniform mat4 uView;
-uniform mat4 uProjection;
+uniform mat4 uMVP;
+
 
 const float TERRAIN_AMPLITUDE = 2.5;
 const float TERRAIN_FREQUENCY = 0.2;
@@ -31,5 +31,5 @@ void main() {
     // Pass a vertical gradient (0.0 to 1.0) based on local height for the fragment shader
     TexCoord = vec2(0.5, aPosition.y); 
 
-    gl_Position = uProjection * uView * worldPos;
+    gl_Position = uMVP * worldPos;
 }
