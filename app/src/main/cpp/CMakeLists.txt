@@ -8,6 +8,7 @@ add_library(procedural_engine SHARED
     AssetManager.cpp
     GrassSim.cpp
     BladeMeshBuilder.cpp
+    BladePipeline.cpp
     EGLCore.cpp
     # RenderLoop.cpp is safely removed to prevent threading conflicts
 )

@@ -29,6 +29,8 @@ private:
     GLuint terrainVAO, terrainVBO, terrainEBO;
     GLuint terrainProgram, grassProgram, grassComputeProgram;
     GLuint grassSSBO;
+    GLuint bladeVAO, bladeVBO, bladeProgram;
+    std::vector<BladeVertex> bladeScratch;
     int indexCount;
 
     // Camera Variables

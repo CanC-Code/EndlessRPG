@@ -75,7 +75,7 @@ GLuint compileShaderFromSource(GLenum type, const char* source) {
     return shader;
 }
 
-GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), indexCount(0) {
+GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), bladeVAO(0), bladeVBO(0), bladeProgram(0), indexCount(0) {
     cameraX = 0.0f; cameraZ = 0.0f; cameraY = 1.8f; camYaw = 0.0f; camPitch = 0.0f; 
 }
 
@@ -155,7 +155,7 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height, AAssetManager* assetManager) {
     if (width <= 0 || height <= 0) return;
     gTime = time;
-    if (terrainVAO == 0) { generateTerrainGrid(); setupShaders(assetManager); }
+    if (terrainVAO == 0) { generateTerrainGrid(); setupShaders(assetManager); setupBladePipeline(&bladeProgram,&bladeVAO,&bladeVBO,assetManager); }
 
     // PHYSICS UPDATE
     // Passing dummy height; Character now probes terrain height internally for accuracy
@@ -200,6 +200,7 @@ void GrassRenderer::render(int width, int height) {
         LOGE("terrain: prog=%u idx=%d", terrainProgram, indexCount);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
     }
+    if (bladeProgram) { drawBlades(bladeProgram,bladeVAO,bladeVBO,mvp,grassSim->tiles(),cameraX,cameraY,cameraZ,gTime,bladeScratch); }
     if (grassProgram) {
         glUseProgram(grassProgram);
         glUniformMatrix4fv(glGetUniformLocation(grassProgram, "uMVP"), 1, GL_FALSE, mvp);
