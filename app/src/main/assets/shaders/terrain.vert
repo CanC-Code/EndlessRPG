@@ -10,9 +10,9 @@ out vec2 TexCoord;
 out vec3 Normal;
 out vec3 FragPos;
 
-uniform mat4 uModel;
-uniform mat4 uView;
-uniform mat4 uProjection;
+uniform mat4 uMVP;
+
+
 
 const float TERRAIN_AMPLITUDE = 2.5;
 const float TERRAIN_FREQUENCY = 0.2;
@@ -22,7 +22,7 @@ float getTerrainHeight(float x, float z) {
 }
 
 void main() {
-    vec4 worldPos = uModel * vec4(aPosition, 1.0);
+    vec4 worldPos = vec4(aPosition, 1.0);
     
     // Apply procedural height
     worldPos.y = getTerrainHeight(worldPos.x, worldPos.z);
@@ -35,7 +35,7 @@ void main() {
     float dz = -TERRAIN_AMPLITUDE * TERRAIN_FREQUENCY * sin(worldPos.x * TERRAIN_FREQUENCY) * sin(worldPos.z * TERRAIN_FREQUENCY);
     vec3 calculatedNormal = normalize(vec3(-dx, 1.0, -dz));
     
-    Normal = mat3(transpose(inverse(uModel))) * calculatedNormal;
+    Normal = calculatedNormal;
     
-    gl_Position = uProjection * uView * worldPos;
+    gl_Position = uMVP * worldPos;
 }
