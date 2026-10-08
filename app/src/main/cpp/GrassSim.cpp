@@ -59,7 +59,7 @@ void GrassSim::populate_tile(GrassTile& t) {
         b.bend       = (next_float() - 0.5f) * 0.4f;
         b.growthTime = 3.0f + next_float() * 5.0f;
         b.age            = next_float() * 20.0f;
-        b.currentHeight  = 0.0f;
+        b.currentHeight  = b.maxHeight;
         b.health         = 1.0f;
         t.blades.push_back(b);
     }
