@@ -20,8 +20,8 @@ GrassSim::GrassSim(uint64_t worldSeed, int tilesX, int tilesZ, float tileSize)
             GrassTile& t = tiles_[(size_t)tz * tilesX_ + tx];
             t.tileX  = tx;
             t.tileZ  = tz;
-            t.worldX = tx * tileSize_;
-            t.worldZ = tz * tileSize_;
+            t.worldX = (tx - tilesX_ * 0.5f) * tileSize_;
+            t.worldZ = (tz - tilesZ_ * 0.5f) * tileSize_;
             populate_tile(t);
         }
     }

@@ -16,6 +16,7 @@ void drawBlades(GLuint p, GLuint v, GLuint b, const float* mvp, const std::vecto
 sc.resize(30000);
 CameraView cv{cx,cy,cz};
 int tc=build_frame_grass(tiles,cv,tm,sc.data(),(int)sc.size());
+static int dbg=0; if((dbg++%60)==0) LOGE("drawBlades tc=%d",tc);
 if(tc<=0)return;
 int nv=tc*3;
 glBindBuffer(GL_ARRAY_BUFFER,b);
