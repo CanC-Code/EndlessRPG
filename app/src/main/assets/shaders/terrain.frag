@@ -14,7 +14,7 @@ const vec3 lightColor = vec3(1.0, 0.95, 0.9);
 
 void main() {
     // Base green ground color
-    vec3 objectColor = vec3(0.15, 0.45, 0.15); 
+    vec3 objectColor = vec3(0.08, 0.22, 0.10); 
     
     // Ambient light
     float ambientStrength = 0.4;
