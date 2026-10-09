@@ -1,0 +1,10 @@
+{
+  "id": "herb_common",
+  "display": "Common Herb",
+  "mesh": "box",
+  "size": [0.25, 0.40, 0.25],
+  "color": [0.20, 0.60, 0.22],
+  "solid": false,
+  "interact": "gather",
+  "loot": "herb_drop"
+}

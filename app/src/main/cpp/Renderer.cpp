@@ -76,7 +76,7 @@ GLuint compileShaderFromSource(GLenum type, const char* source) {
     return shader;
 }
 
-GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), bladeVAO(0), bladeVBO(0), bladeProgram(0), skyProgram(0), indexCount(0) {
+GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), bladeVAO(0), bladeVBO(0), bladeProgram(0), skyProgram(0), entityVAO(0), entityVBO(0), indexCount(0) {
     cameraX = 0.0f; cameraZ = 0.0f; cameraY = 1.8f;
     camYaw = 0.0f; camPitch = 0.0f;
     moveX = 0.0f; moveY = 0.0f; 
@@ -168,7 +168,25 @@ void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp,
 void GrassRenderer::updateAndRender(float time, float dt, int width, int height, AAssetManager* assetManager) {
     if (width <= 0 || height <= 0) return;
     gTime = time;
-    if (terrainVAO == 0) { generateTerrainGrid(); setupShaders(assetManager); setupBladePipeline(&bladeProgram,&bladeVAO,&bladeVBO,assetManager); }
+    if (terrainVAO == 0) {
+        generateTerrainGrid();
+        setupShaders(assetManager);
+        setupBladePipeline(&bladeProgram,&bladeVAO,&bladeVBO,assetManager);
+        world.load(assetManager);
+        world.spawn_test_set();
+        LOGE("World: %zu types, %zu instances", world.typeCount(), world.instanceCount());
+        glGenVertexArrays(1, &entityVAO);
+        glGenBuffers(1, &entityVBO);
+        glBindVertexArray(entityVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, entityVBO);
+        glBufferData(GL_ARRAY_BUFFER, 100000 * 24, nullptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 24, (void*)12);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(2, 4, GL_UNSIGNED_BYTE, GL_TRUE, 24, (void*)20);
+        glEnableVertexAttribArray(2);
+    }
 
     // PHYSICS UPDATE
     // Passing dummy height; Character now probes terrain height internally for accuracy
@@ -266,6 +284,21 @@ void GrassRenderer::render(int width, int height) {
     if (bladeProgram && grassSim) {
         drawBlades(bladeProgram, bladeVAO, bladeVBO, mvp,
                    grassSim->tiles(), cameraX, cameraY, cameraZ, gTime, bladeScratch);
+    }
+    if (bladeProgram && entityVAO != 0) {
+        entityScratch.clear();
+        world.draw(entityScratch);
+        if (!entityScratch.empty()) {
+            glBindBuffer(GL_ARRAY_BUFFER, entityVBO);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, entityScratch.size() * 24, entityScratch.data());
+            glUseProgram(bladeProgram);
+            glUniformMatrix4fv(glGetUniformLocation(bladeProgram, "uMVP"), 1, GL_FALSE, mvp);
+            glUniform3f(glGetUniformLocation(bladeProgram, "uCameraPos"), cameraX, cameraY, cameraZ);
+            glUniform3f(glGetUniformLocation(bladeProgram, "uFogColor"), 0.72f, 0.82f, 0.92f);
+            glUniform1f(glGetUniformLocation(bladeProgram, "uFogDensity"), 0.0008f);
+            glBindVertexArray(entityVAO);
+            glDrawArrays(GL_TRIANGLES, 0, (GLsizei)entityScratch.size());
+        }
     }
     if (grassProgram) {
         glUseProgram(grassProgram);

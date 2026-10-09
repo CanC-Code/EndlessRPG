@@ -1,0 +1,10 @@
+{
+  "id": "chest_wooden",
+  "display": "Wooden Chest",
+  "mesh": "box",
+  "size": [0.8, 0.6, 0.8],
+  "color": [0.55, 0.32, 0.12],
+  "solid": true,
+  "interact": "open_container",
+  "loot": "basic_chest"
+}

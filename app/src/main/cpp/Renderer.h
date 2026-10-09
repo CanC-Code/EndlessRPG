@@ -7,6 +7,7 @@
 #include <android/asset_manager.h>
 #include "BladeMeshBuilder.h"
 #include "BladePipeline.h"
+#include "World.h"
 #include "Character.h" // ADDED: Required for playerCharacter member
 
 class GrassRenderer {
@@ -34,6 +35,7 @@ private:
     GLuint bladeVAO, bladeVBO, bladeProgram;
     GLuint skyProgram;
     std::vector<BladeVertex> bladeScratch;
+    std::vector<BladeVertex> entityScratch;
     int indexCount;
 
     // Camera Variables
@@ -42,6 +44,8 @@ private:
     float moveX, moveY;
 
     std::unique_ptr<GrassSim> grassSim;
+    World world;
+    GLuint entityVAO, entityVBO;
 };
 
 #endif

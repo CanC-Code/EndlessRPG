@@ -7,6 +7,7 @@ add_library(procedural_engine SHARED
     Character.cpp
     AssetManager.cpp
     SimpleJSON.cpp
+    World.cpp
     GrassSim.cpp
     BladeMeshBuilder.cpp
     BladePipeline.cpp

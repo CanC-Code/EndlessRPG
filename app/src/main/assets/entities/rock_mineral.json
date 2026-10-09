@@ -1,0 +1,10 @@
+{
+  "id": "rock_mineral",
+  "display": "Mineral Rock",
+  "mesh": "box",
+  "size": [0.60, 0.55, 0.60],
+  "color": [0.42, 0.40, 0.38],
+  "solid": true,
+  "interact": "mine",
+  "loot": "ore_drop"
+}
