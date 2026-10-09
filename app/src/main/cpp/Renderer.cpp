@@ -76,7 +76,9 @@ GLuint compileShaderFromSource(GLenum type, const char* source) {
 }
 
 GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), bladeVAO(0), bladeVBO(0), bladeProgram(0), indexCount(0) {
-    cameraX = 0.0f; cameraZ = 0.0f; cameraY = 1.8f; camYaw = 0.0f; camPitch = 0.0f; 
+    cameraX = 0.0f; cameraZ = 0.0f; cameraY = 1.8f;
+    camYaw = 0.0f; camPitch = 0.0f;
+    moveX = 0.0f; moveY = 0.0f; 
 }
 
 GrassRenderer::~GrassRenderer() {}
