@@ -60,7 +60,7 @@ void drawBlades(GLuint p, GLuint v, GLuint b, const float* mvp,
     glUniformMatrix4fv(glGetUniformLocation(p, "uMVP"), 1, GL_FALSE, mvp);
     glUniform3f(glGetUniformLocation(p, "uCameraPos"), cx, cy, cz);
     glUniform3f(glGetUniformLocation(p, "uFogColor"), 0.72f, 0.82f, 0.92f);
-    glUniform1f(glGetUniformLocation(p, "uFogDensity"), 0.0035f);
+    glUniform1f(glGetUniformLocation(p, "uFogDensity"), 0.0008f);
     glBindVertexArray(v);
     glDrawArrays(GL_TRIANGLES, 0, nv);
 }
