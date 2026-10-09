@@ -75,7 +75,7 @@ GLuint compileShaderFromSource(GLenum type, const char* source) {
     return shader;
 }
 
-GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), bladeVAO(0), bladeVBO(0), bladeProgram(0), indexCount(0) {
+GrassRenderer::GrassRenderer() : terrainVAO(0), terrainVBO(0), terrainEBO(0), terrainProgram(0), grassProgram(0), grassComputeProgram(0), grassSSBO(0), bladeVAO(0), bladeVBO(0), bladeProgram(0), skyProgram(0), indexCount(0) {
     cameraX = 0.0f; cameraZ = 0.0f; cameraY = 1.8f;
     camYaw = 0.0f; camPitch = 0.0f;
     moveX = 0.0f; moveY = 0.0f; 
@@ -116,6 +116,16 @@ void GrassRenderer::setupShaders(AAssetManager* assetManager) {
         glLinkProgram(grassProgram);
         free(gvsSrc); free(gfsSrc);
     }
+    char* svsSrc = loadShaderFile(assetManager, "shaders/sky.vert");
+    char* sfsSrc = loadShaderFile(assetManager, "shaders/sky.frag");
+    if (svsSrc && sfsSrc) {
+        skyProgram = glCreateProgram();
+        glAttachShader(skyProgram, compileShaderFromSource(GL_VERTEX_SHADER, svsSrc));
+        glAttachShader(skyProgram, compileShaderFromSource(GL_FRAGMENT_SHADER, sfsSrc));
+        glLinkProgram(skyProgram);
+        free(svsSrc); free(sfsSrc);
+    }
+
     glGenBuffers(1, &grassSSBO);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, grassSSBO);
     glBufferData(GL_SHADER_STORAGE_BUFFER, 65536 * 32, nullptr, GL_DYNAMIC_DRAW);
@@ -186,6 +196,34 @@ void GrassRenderer::render(int width, int height) {
     lookAt(view, cameraX, cameraY, cameraZ, cameraX + sinf(camYaw)*cosf(camPitch), cameraY - sinf(camPitch), cameraZ - cosf(camYaw)*cosf(camPitch), 0.0f, 1.0f, 0.0f);
     multiplyMatrix(mvp, proj, view);
 
+
+    // ---- Sky pass ----
+    {
+        float cyaw = cosf(camYaw), syaw = sinf(camYaw);
+        float cpit = cosf(camPitch), spit = sinf(camPitch);
+        float ffx = syaw * cpit, ffy = -spit, ffz = -cyaw * cpit;
+        float rrx = cyaw, rry = 0.0f, rrz = syaw;
+        float uux = rry * ffz - rrz * ffy;
+        float uuy = rrz * ffx - rrx * ffz;
+        float uuz = rrx * ffy - rry * ffx;
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        if (skyProgram) {
+            glUseProgram(skyProgram);
+            glUniform3f(glGetUniformLocation(skyProgram, "uCamForward"), ffx, ffy, ffz);
+            glUniform3f(glGetUniformLocation(skyProgram, "uCamRight"), rrx, rry, rrz);
+            glUniform3f(glGetUniformLocation(skyProgram, "uCamUp"), uux, uuy, uuz);
+            glUniform3f(glGetUniformLocation(skyProgram, "uCamPos"), cameraX, cameraY, cameraZ);
+            glUniform1f(glGetUniformLocation(skyProgram, "uTanHalfFovY"), tanf(30.0f * (float)M_PI / 180.0f));
+            glUniform1f(glGetUniformLocation(skyProgram, "uAspect"), (float)width / (float)height);
+            glUniform1f(glGetUniformLocation(skyProgram, "uTime"), gTime);
+            glBindVertexArray(emptyVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+    }
+
     if (grassComputeProgram) {
         glUseProgram(grassComputeProgram);
         glUniform3f(glGetUniformLocation(grassComputeProgram, "u_CameraPos"), cameraX, cameraY, cameraZ);
@@ -197,7 +235,9 @@ void GrassRenderer::render(int width, int height) {
     if (terrainProgram) {
         glUseProgram(terrainProgram);
         glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uMVP"), 1, GL_FALSE, mvp);
-        glUniform3f(glGetUniformLocation(terrainProgram, "u_CameraPos"), cameraX, cameraY, cameraZ);
+        glUniform3f(glGetUniformLocation(terrainProgram, "uCameraPos"), cameraX, cameraY, cameraZ);
+        glUniform3f(glGetUniformLocation(terrainProgram, "uFogColor"), 0.72f, 0.82f, 0.92f);
+        glUniform1f(glGetUniformLocation(terrainProgram, "uFogDensity"), 0.008f);
         glBindVertexArray(terrainVAO);
         static int dbg_cam = 0;
         if ((dbg_cam++ % 60) == 0) LOGE("cam pos=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f", cameraX, cameraY, cameraZ, camYaw, camPitch);

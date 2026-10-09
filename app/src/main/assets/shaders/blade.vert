@@ -6,8 +6,10 @@ layout(location=2) in vec4 aColor;
 uniform mat4 uMVP;
 out vec4 vColor;
 out vec2 vUV;
-void main(){
-vColor=aColor;
-vUV=aUV;
-gl_Position=uMVP*vec4(aPos,1.0);
+out vec3 vWorldPos;
+void main() {
+    vColor = aColor;
+    vUV = aUV;
+    vWorldPos = aPos;
+    gl_Position = uMVP * vec4(aPos, 1.0);
 }

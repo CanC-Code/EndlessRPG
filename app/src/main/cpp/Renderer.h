@@ -32,6 +32,7 @@ private:
     GLuint terrainProgram, grassProgram, grassComputeProgram;
     GLuint grassSSBO;
     GLuint bladeVAO, bladeVBO, bladeProgram;
+    GLuint skyProgram;
     std::vector<BladeVertex> bladeScratch;
     int indexCount;
 
