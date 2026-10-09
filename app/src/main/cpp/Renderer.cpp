@@ -237,7 +237,7 @@ void GrassRenderer::render(int width, int height) {
         glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uMVP"), 1, GL_FALSE, mvp);
         glUniform3f(glGetUniformLocation(terrainProgram, "uCameraPos"), cameraX, cameraY, cameraZ);
         glUniform3f(glGetUniformLocation(terrainProgram, "uFogColor"), 0.72f, 0.82f, 0.92f);
-        glUniform1f(glGetUniformLocation(terrainProgram, "uFogDensity"), 0.008f);
+        glUniform1f(glGetUniformLocation(terrainProgram, "uFogDensity"), 0.0035f);
         glBindVertexArray(terrainVAO);
         static int dbg_cam = 0;
         if ((dbg_cam++ % 60) == 0) LOGE("cam pos=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f", cameraX, cameraY, cameraZ, camYaw, camPitch);

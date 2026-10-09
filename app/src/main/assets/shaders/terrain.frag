@@ -39,7 +39,7 @@ void main() {
     float dirtMask  = max(max(dirtSlope, dirtPatch), rockMask);
 
     // Material colors (dark, since blades provide the top layer)
-    vec3 grassCol = vec3(0.09, 0.20, 0.07) * (0.85 + 0.30 * noise(FragPos.xz * 6.0));
+    vec3 grassCol = vec3(0.10, 0.22, 0.08) * (0.75 + 0.50 * noise(FragPos.xz * 6.0));
     vec3 dirtCol  = vec3(0.30, 0.20, 0.12);
     vec3 rockCol  = vec3(0.42, 0.41, 0.38);
 
