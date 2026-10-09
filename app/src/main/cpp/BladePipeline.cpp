@@ -47,7 +47,7 @@ void drawBlades(GLuint p, GLuint v, GLuint b, const float* mvp,
                 const std::vector<GrassTile>& tiles,
                 float cx, float cy, float cz, float tm,
                 std::vector<BladeVertex>& sc) {
-    sc.resize(30000);
+    sc.resize(80000);
     CameraView cv{cx, cy, cz};
     int tc = build_frame_grass(tiles, cv, tm, sc.data(), (int)sc.size());
     static int dbg = 0;
