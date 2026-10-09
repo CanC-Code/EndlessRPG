@@ -204,7 +204,10 @@ void GrassRenderer::render(int width, int height) {
         LOGE("terrain: prog=%u idx=%d", terrainProgram, indexCount);
         glDrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, 0);
     }
-    // blade draw temporarily disabled for diagnostic
+    if (bladeProgram && grassSim) {
+        drawBlades(bladeProgram, bladeVAO, bladeVBO, mvp,
+                   grassSim->tiles(), cameraX, cameraY, cameraZ, gTime, bladeScratch);
+    }
     if (grassProgram) {
         glUseProgram(grassProgram);
         glUniformMatrix4fv(glGetUniformLocation(grassProgram, "uMVP"), 1, GL_FALSE, mvp);
