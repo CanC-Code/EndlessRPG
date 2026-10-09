@@ -26,8 +26,11 @@ void Character::update(float deltaTime, float joystickX, float joystickY, float 
     
     // Calculate movement direction relative to camera yaw
     // (Assuming camYaw is in radians. If your engine uses degrees, you will need to multiply it by PI/180 here)
-    float moveX = joystickX * std::cos(camYaw) - joystickY * std::sin(camYaw);
-    float moveZ = joystickX * std::sin(camYaw) + joystickY * std::cos(camYaw);
+    // Camera looks toward (sin(yaw), 0, -cos(yaw)) at yaw=0 -> -Z.
+    // Joystick forward (Y+) maps to +forward_world. Right vector is
+    // (cos(yaw), 0, sin(yaw)). Movement = stickX*right + stickY*forward.
+    float moveX = joystickX * std::cos(camYaw) + joystickY * std::sin(camYaw);
+    float moveZ = joystickX * std::sin(camYaw) - joystickY * std::cos(camYaw);
 
     // 1. Update horizontal position
     position.x += moveX * speed * deltaTime;
