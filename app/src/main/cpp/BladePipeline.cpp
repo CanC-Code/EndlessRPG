@@ -34,7 +34,7 @@ void setupBladePipeline(GLuint* p, GLuint* v, GLuint* b, AAssetManager* am) {
     glGenBuffers(1, b);
     glBindVertexArray(*v);
     glBindBuffer(GL_ARRAY_BUFFER, *b);
-    glBufferData(GL_ARRAY_BUFFER, 200000 * 24, nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, 500000 * 24, nullptr, GL_DYNAMIC_DRAW);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 24, 0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 24, (void*)12);
@@ -47,7 +47,7 @@ void drawBlades(GLuint p, GLuint v, GLuint b, const float* mvp,
                 const std::vector<GrassTile>& tiles,
                 float cx, float cy, float cz, float tm,
                 std::vector<BladeVertex>& sc) {
-    sc.resize(80000);
+    sc.resize(400000);
     CameraView cv{cx, cy, cz};
     int tc = build_frame_grass(tiles, cv, tm, sc.data(), (int)sc.size());
     static int dbg = 0;
