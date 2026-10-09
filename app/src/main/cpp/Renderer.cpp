@@ -1,4 +1,5 @@
 #include "Renderer.h"
+#include "SimpleJSON.h"
 #include "BladeMeshBuilder.h"
 #include <GLES3/gl31.h>
 #include <cmath>
@@ -177,6 +178,21 @@ void GrassRenderer::updateAndRender(float time, float dt, int width, int height,
     cameraX = playerCharacter.getX();
     cameraZ = playerCharacter.getZ();
     cameraY = playerCharacter.getY() + 1.8f; // Head eye-level
+
+    static bool __jsontest = false;
+    if (!__jsontest) {
+        __jsontest = true;
+        const char* probe = R"({"id":"chest_wooden","size":[0.8,0.6,0.8],"solid":true,"hp":40})";
+        auto v = json::parse(probe);
+        if (!v) LOGE("JSON self-test FAILED: %s", json::error().c_str());
+        else {
+            LOGE("JSON self-test OK: id=%s size0=%.2f solid=%d hp=%d",
+                 v->getString("id").c_str(),
+                 v->get("size") ? v->get("size")->arrayVal[0]->asFloat() : -1.0f,
+                 v->getBool("solid") ? 1 : 0,
+                 v->getInt("hp"));
+        }
+    }
 
     if (!grassSim) initGrassSim();
     grassSim->tick(dt, cameraX, cameraZ, 25.0f);
