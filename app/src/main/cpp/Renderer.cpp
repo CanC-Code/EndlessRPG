@@ -251,6 +251,10 @@ void GrassRenderer::render(int width, int height) {
     if (terrainProgram) {
         glUseProgram(terrainProgram);
         glUniformMatrix4fv(glGetUniformLocation(terrainProgram, "uMVP"), 1, GL_FALSE, mvp);
+        const float CELL = 4.0f;
+        float offX = std::floor(cameraX / CELL) * CELL;
+        float offZ = std::floor(cameraZ / CELL) * CELL;
+        glUniform3f(glGetUniformLocation(terrainProgram, "uChunkOffset"), offX, 0.0f, offZ);
         glUniform3f(glGetUniformLocation(terrainProgram, "uCameraPos"), cameraX, cameraY, cameraZ);
         glUniform3f(glGetUniformLocation(terrainProgram, "uFogColor"), 0.72f, 0.82f, 0.92f);
         glBindVertexArray(terrainVAO);

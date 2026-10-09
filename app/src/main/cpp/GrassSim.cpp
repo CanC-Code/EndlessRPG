@@ -1,4 +1,5 @@
 #include "GrassSim.h"
+#include <cmath>
 
 uint64_t hash64(uint64_t seed, int x, int z) {
     uint64_t h = seed;
@@ -11,23 +12,25 @@ uint64_t hash64(uint64_t seed, int x, int z) {
 }
 
 GrassSim::GrassSim(uint64_t worldSeed, int tilesX, int tilesZ, float tileSize)
-    : seed_(worldSeed), tilesX_(tilesX), tilesZ_(tilesZ), tileSize_(tileSize)
+    : seed_(worldSeed), tilesX_(tilesX), tilesZ_(tilesZ), originX_(0), originZ_(0), tileSize_(tileSize)
 {
     tiles_.resize((size_t)tilesX_ * tilesZ_);
     for (int tz = 0; tz < tilesZ_; ++tz) {
         for (int tx = 0; tx < tilesX_; ++tx) {
             GrassTile& t = tiles_[(size_t)tz * tilesX_ + tx];
-            t.tileX  = tx;
-            t.tileZ  = tz;
-            t.worldX = (tx - tilesX_ * 0.5f) * tileSize_;
-            t.worldZ = (tz - tilesZ_ * 0.5f) * tileSize_;
+            t.tileX  = tx - tilesX_ / 2;
+            t.tileZ  = tz - tilesZ_ / 2;
+            t.worldX = t.tileX * tileSize_;
+            t.worldZ = t.tileZ * tileSize_;
             populate_tile(t);
         }
     }
+    originX_ = -tilesX_ / 2;
+    originZ_ = -tilesZ_ / 2;
 }
 
 void GrassSim::populate_tile(GrassTile& t) {
-    uint64_t h = hash64(seed_, t.tileX, t.tileZ);
+    uint64_t h = hash64(seed_, t.tileX, t.tileZ);  // tileX/Z are absolute world tile coords
     auto next_u32 = [&h]() -> uint32_t {
         h ^= h << 13; h ^= h >> 7; h ^= h << 17;
         return (uint32_t)(h >> 32);
@@ -75,7 +78,33 @@ void GrassSim::populate_tile(GrassTile& t) {
 }
 
 void GrassSim::tick(float dt, float camX, float camZ, float activeRadius) {
-    (void)dt; (void)camX; (void)camZ; (void)activeRadius;
+    (void)dt; (void)activeRadius;
+    int px = (int)std::floor(camX / tileSize_);
+    int pz = (int)std::floor(camZ / tileSize_);
+    int wantX = px - tilesX_ / 2;
+    int wantZ = pz - tilesZ_ / 2;
+    if (wantX != originX_ || wantZ != originZ_) {
+        set_origin(wantX, wantZ);
+    }
+}
+
+void GrassSim::set_origin(int newX, int newZ) {
+    originX_ = newX;
+    originZ_ = newZ;
+    for (int tz = 0; tz < tilesZ_; ++tz) {
+        for (int tx = 0; tx < tilesX_; ++tx) {
+            GrassTile& t = tiles_[(size_t)tz * tilesX_ + tx];
+            int absX = originX_ + tx;
+            int absZ = originZ_ + tz;
+            if (t.tileX == absX && t.tileZ == absZ && !t.blades.empty()) continue;
+            t.tileX  = absX;
+            t.tileZ  = absZ;
+            t.worldX = absX * tileSize_;
+            t.worldZ = absZ * tileSize_;
+            t.blades.clear();
+            populate_tile(t);
+        }
+    }
 }
 
 void GrassSim::tick_blade(Blade& b, float dt) {

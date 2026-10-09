@@ -37,8 +37,10 @@ private:
 
     uint64_t seed_;
     int      tilesX_, tilesZ_;
+    int      originX_, originZ_;
     float    tileSize_;
     std::vector<GrassTile> tiles_;
+    void set_origin(int newX, int newZ);
 };
 
 uint64_t hash64(uint64_t seed, int x, int z);

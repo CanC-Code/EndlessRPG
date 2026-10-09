@@ -11,6 +11,7 @@ out vec3 Normal;
 out vec3 FragPos;
 
 uniform mat4 uMVP;
+uniform vec3 uChunkOffset;
 
 
 
@@ -22,7 +23,7 @@ float getTerrainHeight(float x, float z) {
 }
 
 void main() {
-    vec4 worldPos = vec4(aPosition, 1.0);
+    vec4 worldPos = vec4(aPosition + uChunkOffset, 1.0);
     
     // Apply procedural height
     worldPos.y = getTerrainHeight(worldPos.x, worldPos.z);
