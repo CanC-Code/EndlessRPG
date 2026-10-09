@@ -1,3 +1,5 @@
+#include <android/log.h>
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR,"BladePipeline",__VA_ARGS__)
 #include "BladePipeline.h"
 #include <cstdlib>
 static GLuint mk(GLenum t, const char* s){GLuint h=glCreateShader(t);glShaderSource(h,1,&s,nullptr);glCompileShader(h);return h;}
