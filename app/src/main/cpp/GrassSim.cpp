@@ -1,6 +1,33 @@
 #include "GrassSim.h"
 #include <cmath>
 
+static float biome_hash(float x, float y) {
+    float s = sinf(x * 127.1f + y * 311.7f) * 43758.5453123f;
+    return s - floorf(s);
+}
+static float biome_noise(float x, float y) {
+    float ix = floorf(x), iy = floorf(y);
+    float fx = x - ix, fy = y - iy;
+    fx = fx*fx*(3.0f-2.0f*fx);
+    fy = fy*fy*(3.0f-2.0f*fy);
+    float a = biome_hash(ix,   iy);
+    float b = biome_hash(ix+1, iy);
+    float c = biome_hash(ix,   iy+1);
+    float d = biome_hash(ix+1, iy+1);
+    return (a*(1-fx)+b*fx)*(1-fy) + (c*(1-fx)+d*fx)*fy;
+}
+static float biome_fbm(float x, float y) {
+    float v = 0.0f, a = 0.5f;
+    for (int i = 0; i < 4; ++i) { v += a*biome_noise(x,y); x *= 2.05f; y *= 2.05f; a *= 0.5f; }
+    return v;
+}
+static float biome_smoothstep(float a, float b, float x) {
+    float t = (x - a) / (b - a);
+    if (t < 0) t = 0; if (t > 1) t = 1;
+    return t * t * (3.0f - 2.0f * t);
+}
+
+
 uint64_t hash64(uint64_t seed, int x, int z) {
     uint64_t h = seed;
     h ^= (uint64_t)(uint32_t)x * 0x9E3779B97F4A7C15ULL;
@@ -39,8 +66,13 @@ void GrassSim::populate_tile(GrassTile& t) {
         return (next_u32() & 0xFFFFFF) / (float)0x1000000;
     };
 
-    // 40 clumps per 4x4m tile = 2.5 clumps/m^2. Each clump 6-12 blades.
-    const int NUM_CLUMPS = 40;
+    // Biome mask: dirt patches skip grass entirely, transition zones thin out.
+    float tileCX = t.worldX + tileSize_ * 0.5f;
+    float tileCZ = t.worldZ + tileSize_ * 0.5f;
+    float patch = biome_fbm(tileCX * 0.10f, tileCZ * 0.10f);
+    if (patch > 0.68f) { t.blades.clear(); return; }
+    float density = 1.0f - biome_smoothstep(0.52f, 0.68f, patch);
+    int NUM_CLUMPS = (int)(3.0f + density * 40.0f);
     t.blades.reserve(NUM_CLUMPS * 12);
 
     for (int c = 0; c < NUM_CLUMPS; ++c) {
