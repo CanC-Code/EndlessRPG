@@ -134,14 +134,96 @@ void GrassRenderer::setupShaders(AAssetManager* assetManager) {
     glGenVertexArrays(1, &emptyVAO);
 }
 
+// --- CPU-side noise for vertex colors (deterministic, no GPU issues) ---
+static float v_hash(float x, float y) {
+    float s = sinf(x * 127.1f + y * 311.7f) * 43758.5453f;
+    return s - floorf(s);
+}
+static float v_noise(float x, float y) {
+    float ix = floorf(x), iy = floorf(y);
+    float fx = x - ix, fy = y - iy;
+    fx = fx*fx*(3.0f-2.0f*fx);
+    fy = fy*fy*(3.0f-2.0f*fy);
+    float a = v_hash(ix,   iy);
+    float b = v_hash(ix+1, iy);
+    float c = v_hash(ix,   iy+1);
+    float d = v_hash(ix+1, iy+1);
+    return (a*(1-fx)+b*fx)*(1-fy) + (c*(1-fx)+d*fx)*fy;
+}
+static float v_fbm(float x, float y) {
+    float v = 0.0f, a = 0.5f;
+    for (int i = 0; i < 4; ++i) { v += a*v_noise(x,y); x*=2.05f; y*=2.05f; a*=0.5f; }
+    return v;
+}
+static float v_smoothstep(float e0, float e1, float x) {
+    float t = (x - e0) / (e1 - e0);
+    if (t < 0) t = 0; if (t > 1) t = 1;
+    return t * t * (3.0f - 2.0f * t);
+}
+
 void GrassRenderer::generateTerrainGrid() {
-    std::vector<float> vertices;
+    std::vector<float> vertices;   // 6 floats per vertex: x y z r g b
     std::vector<unsigned int> indices;
     int res = 160; float size = 320.0f;
+    float half = size * 0.5f;
+
     for(int z = 0; z < res; z++) {
         for(int x = 0; x < res; x++) {
-            vertices.push_back((x / (float)res) * size - size*0.5f);
-            vertices.push_back(0.0f); vertices.push_back((z / (float)res) * size - size*0.5f);
+            float px = (x / (float)res) * size - half;
+            float pz = (z / (float)res) * size - half;
+
+            // recompute terrain height (must match shader)
+            float py = 2.5f * sinf(px * 0.2f) * cosf(pz * 0.2f);
+            // approximate slope via finite difference
+            float ex = 0.5f;
+            float hL = 2.5f * sinf((px-ex) * 0.2f) * cosf(pz * 0.2f);
+            float hR = 2.5f * sinf((px+ex) * 0.2f) * cosf(pz * 0.2f);
+            float hD = 2.5f * sinf(px * 0.2f) * cosf((pz-ex) * 0.2f);
+            float hU = 2.5f * sinf(px * 0.2f) * cosf((pz+ex) * 0.2f);
+            float gx = (hR - hL) / (2.0f * ex);
+            float gz = (hU - hD) / (2.0f * ex);
+            float slope = sqrtf(gx*gx + gz*gz);   // 0 = flat, grows with steepness
+
+            // biome noise at world position
+            float patch = v_fbm(px * 0.10f, pz * 0.10f);
+            float mid   = v_fbm(px * 0.50f, pz * 0.50f);
+            float fine  = v_noise(px * 3.0f, pz * 3.0f);
+
+            float rockMask  = v_smoothstep(0.35f, 0.65f, slope + (patch - 0.5f) * 0.30f);
+            float dirtSlope = v_smoothstep(0.12f, 0.32f, slope);
+            float dirtPatch = v_smoothstep(0.60f, 0.78f, patch);
+            float dirtMask  = fmaxf(dirtSlope, dirtPatch);
+
+            float richR = 0.06f, richG = 0.16f, richB = 0.05f;
+            float dryR  = 0.32f, dryG  = 0.28f, dryB  = 0.12f;
+            float dirtR = 0.30f, dirtG = 0.19f, dirtB = 0.10f;
+            float rockR = 0.42f, rockG = 0.41f, rockB = 0.38f;
+
+            float dryBlend = v_smoothstep(0.45f, 0.70f, mid);
+            float gR = richR + (dryR - richR) * dryBlend;
+            float gG = richG + (dryG - richG) * dryBlend;
+            float gB = richB + (dryB - richB) * dryBlend;
+            float boost = 0.85f + 0.30f * fine;
+            gR *= boost; gG *= boost; gB *= boost;
+
+            float cR = gR + (dirtR - gR) * dirtMask;
+            float cG = gG + (dirtG - gG) * dirtMask;
+            float cB = gB + (dirtB - gB) * dirtMask;
+
+            cR = cR + (rockR - cR) * rockMask;
+            cG = cG + (rockG - cG) * rockMask;
+            cB = cB + (rockB - cB) * rockMask;
+
+            if (cR > 1) cR = 1; if (cR < 0) cR = 0;
+            if (cG > 1) cG = 1; if (cG < 0) cG = 0;
+            if (cB > 1) cB = 1; if (cB < 0) cB = 0;
+
+            vertices.push_back(px);
+            vertices.push_back(py);
+            vertices.push_back(pz);
+            vertices.push_back(cR);
+            vertices.push_back(cG);
+            vertices.push_back(cB);
         }
     }
     for(int z = 0; z < res - 1; z++) {
@@ -155,8 +237,10 @@ void GrassRenderer::generateTerrainGrid() {
     glBindVertexArray(terrainVAO);
     glBindBuffer(GL_ARRAY_BUFFER, terrainVBO); glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, terrainEBO); glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
 }
 
 void GrassRenderer::updateInput(float mx, float my, float lx, float ly, bool tp, float zoom) {
